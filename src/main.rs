@@ -8,7 +8,7 @@ use crossterm::{
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     env,
     fs,
     io::{self, Read, Write},
@@ -139,6 +139,8 @@ struct App {
     match_idx: usize,
     // org
     folded: HashSet<usize>,
+    // marcas de vim: m<x> fija · '<x> salta
+    marks: HashMap<char, (usize, usize)>,
     // navegador
     browser: Browser,
     // ia
@@ -564,7 +566,13 @@ impl App {
         self.top = 0;
         self.left = 0;
         self.anchor = None;
+        // los headers se abren SIEMPRE plegados: el usuario los despliega con Tab/za
         self.folded.clear();
+        for r in 0..self.lines.len() {
+            if self.header_level(r).is_some() {
+                self.folded.insert(r);
+            }
+        }
         self.search_query.clear();
         self.matches.clear();
         self.pending = None;
@@ -1001,6 +1009,7 @@ fn main() -> Result<()> {
         matches: Vec::new(),
         match_idx: 0,
         folded: HashSet::new(),
+        marks: HashMap::new(),
         browser,
         ai_lines: Vec::new(),
         ai_input: String::new(),
@@ -1024,6 +1033,13 @@ fn main() -> Result<()> {
         sudo_pass: String::new(),
         sudo_text: String::new(),
     };
+
+    // abrir el fichero inicial con todos los headers plegados
+    for r in 0..app.lines.len() {
+        if app.header_level(r).is_some() {
+            app.folded.insert(r);
+        }
+    }
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, Hide)?;
@@ -1376,7 +1392,7 @@ fn handle_ai_key(app: &mut App, k: KeyEvent) {
 fn handle_editor_key(app: &mut App, k: KeyEvent) {
     match app.mode {
         Mode::Normal => {
-            // secuencias de dos teclas (gg, dd, z + a/o/c/r/m)
+            // secuencias de dos teclas (gg, dd, z + a/o/c/r/m, m<x> marca, '<x> salto)
             let fold_seq = app.pending == Some('z')
                 && matches!(
                     k.code,
@@ -1386,13 +1402,39 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                         | KeyCode::Char('r')
                         | KeyCode::Char('m')
                 );
-            let repeatable =
-                matches!(k.code, KeyCode::Char('g') | KeyCode::Char('d') | KeyCode::Char('z'))
-                    || fold_seq;
+            let mark_seq = matches!(app.pending, Some('m') | Some('\''))
+                && matches!(k.code, KeyCode::Char(c) if c.is_ascii_lowercase());
+            let repeatable = matches!(
+                k.code,
+                KeyCode::Char('g')
+                    | KeyCode::Char('d')
+                    | KeyCode::Char('z')
+                    | KeyCode::Char('m')
+                    | KeyCode::Char('\'')
+            ) || fold_seq
+                || mark_seq;
             if !repeatable {
                 app.pending = None;
             }
             match k.code {
+                // marcas de vim: m<x> fija la posición · '<x> salta a ella
+                KeyCode::Char(c) if app.pending == Some('m') && c.is_ascii_lowercase() => {
+                    app.marks.insert(c, (app.row, app.col));
+                    app.pending = None;
+                    app.status = format!("Marca '{}' establecida", c);
+                }
+                KeyCode::Char(c) if app.pending == Some('\'') && c.is_ascii_lowercase() => {
+                    if let Some(&(r, cc)) = app.marks.get(&c) {
+                        app.row = r;
+                        app.col = cc;
+                        app.reveal_row(app.row);
+                        app.ensure_visible();
+                        app.status = format!("Saltando a la marca '{}'", c);
+                    } else {
+                        app.status = format!("La marca '{}' no existe", c);
+                    }
+                    app.pending = None;
+                }
                 KeyCode::Char('h') | KeyCode::Left => app.move_cursor(0, -1),
                 KeyCode::Char('j') | KeyCode::Down => app.move_cursor(1, 0),
                 KeyCode::Char('k') | KeyCode::Up => app.move_cursor(-1, 0),
@@ -1453,6 +1495,8 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.ensure_visible();
                 }
                 KeyCode::Char('z') => app.pending = Some('z'),
+                KeyCode::Char('m') => app.pending = Some('m'),
+                KeyCode::Char('\'') => app.pending = Some('\''),
                 KeyCode::Char('d') if app.pending == Some('d') => {
                     app.delete_line();
                     app.pending = None;
@@ -1875,7 +1919,7 @@ fn draw(app: &mut App) -> Result<()> {
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
     let help = match app.mode {
         Mode::Normal | Mode::Insert | Mode::Visual => {
-            "Ctrl+B tree · i escribir · Esc · Tab/za plegar · Ctrl+A IA · Tab shell · Ctrl+E enviar · Ctrl+S guardar · Ctrl+Shift+↑↓ borde · Ctrl+Q salir"
+            "Ctrl+B tree · i · Esc · Tab/za plegar · m marca · 'a saltar · Ctrl+A IA · Ctrl+E enviar · Ctrl+S · Ctrl+Q salir"
         }
         Mode::Browser => {
             "j/k mover · l entrar · h subir · Enter abrir · g/G extremos · Esc editor · Ctrl+B ocultar"
