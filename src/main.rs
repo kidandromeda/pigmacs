@@ -67,9 +67,6 @@ impl Browser {
         let mut files = Vec::new();
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
             if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 dirs.push(name);
             } else {
@@ -1823,6 +1820,172 @@ fn render_frame(prev: &mut Frame, cur: &Frame, out: &mut io::Stdout) -> io::Resu
     Ok(())
 }
 
+/// aplica una secuencia SGR (parámetros de ESC[...m) sobre un estilo
+fn parse_sgr(params: &str, mut st: Style) -> Style {
+    const FD: [Color; 8] = [
+        Color::Black,
+        Color::DarkRed,
+        Color::DarkGreen,
+        Color::DarkYellow,
+        Color::DarkBlue,
+        Color::DarkMagenta,
+        Color::DarkCyan,
+        Color::Grey,
+    ];
+    const FB: [Color; 8] = [
+        Color::Grey,
+        Color::Red,
+        Color::Green,
+        Color::Yellow,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+        Color::White,
+    ];
+    let ps: Vec<&str> = params.split(';').collect();
+    let mut k = 0usize;
+    while k < ps.len() {
+        let n = ps[k].parse::<u16>().unwrap_or(999);
+        match n {
+            0 => st = Style::default(),
+            1 => st.bold = true,
+            7 => st.reverse = true,
+            22 => st.bold = false,
+            27 => st.reverse = false,
+            39 => st.fg = None,
+            49 => st.bg = None,
+            30..=37 => st.fg = Some(FD[(n - 30) as usize]),
+            40..=47 => st.bg = Some(FD[(n - 40) as usize]),
+            90..=97 => st.fg = Some(FB[(n - 90) as usize]),
+            100..=107 => st.bg = Some(FB[(n - 100) as usize]),
+            38 | 48 => {
+                if k + 2 < ps.len() && ps[k + 1] == "5" {
+                    let v = ps[k + 2].parse::<u8>().unwrap_or(7);
+                    if n == 38 {
+                        st.fg = Some(Color::AnsiValue(v));
+                    } else {
+                        st.bg = Some(Color::AnsiValue(v));
+                    }
+                    k += 2;
+                } else if k + 4 < ps.len() && ps[k + 1] == "2" {
+                    let r = ps[k + 2].parse::<u8>().unwrap_or(0);
+                    let g = ps[k + 3].parse::<u8>().unwrap_or(0);
+                    let b = ps[k + 4].parse::<u8>().unwrap_or(0);
+                    if n == 38 {
+                        st.fg = Some(Color::Rgb { r, g, b });
+                    } else {
+                        st.bg = Some(Color::Rgb { r, g, b });
+                    }
+                    k += 4;
+                }
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    st
+}
+
+/// pinta la salida del shell en el frame interpretando \r, \b, \n y colores ANSI.
+/// Un mini-emulador de terminal: sin él, los \r de readline (historial con ↑)
+/// concatenaban dos comandos seguidos.
+fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, rows: u16, area_w: u16) {
+    let shell = app.shell.output.lock().unwrap();
+    let raw = String::from_utf8_lossy(&shell);
+    // limitar a la cola reciente (el buffer crece sin límite)
+    let mut tail: &str = &raw;
+    if raw.len() > 8192 {
+        let start = raw.len() - 8192;
+        if raw.is_char_boundary(start) {
+            tail = &raw[start..];
+        }
+    }
+
+    // modelo de línea virtual: \r sobrescribe desde el inicio, \b retrocede
+    let mut lines: Vec<Vec<(char, Style)>> = vec![Vec::new()];
+    let mut x = 0usize;
+    let mut st = Style::default();
+    let chars: Vec<char> = tail.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\n' => {
+                lines.push(Vec::new());
+                x = 0;
+                i += 1;
+            }
+            '\r' => {
+                x = 0;
+                i += 1;
+            }
+            '\x08' | '\x7f' => {
+                x = x.saturating_sub(1);
+                i += 1;
+            }
+            '\x1b' => {
+                if i + 1 < chars.len() && chars[i + 1] == '[' {
+                    // CSI: hasta el byte final 0x40-0x7e
+                    let mut j = i + 2;
+                    while j < chars.len() && !('@'..='~').contains(&chars[j]) {
+                        j += 1;
+                    }
+                    if j < chars.len() && chars[j] == 'm' {
+                        let params: String = chars[i + 2..j].iter().collect();
+                        st = parse_sgr(&params, st);
+                    }
+                    i = j + 1;
+                } else if i + 1 < chars.len() && chars[i + 1] == ']' {
+                    // OSC: hasta BEL o ESC \
+                    let mut j = i + 2;
+                    while j < chars.len() {
+                        if chars[j] == '\x07' {
+                            j += 1;
+                            break;
+                        }
+                        if chars[j] == '\x1b' && j + 1 < chars.len() && chars[j + 1] == '\\' {
+                            j += 2;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    i = j;
+                } else {
+                    i += 2;
+                }
+            }
+            c if (c as u32) < 32 => i += 1,
+            c => {
+                let line = lines.last_mut().unwrap();
+                while line.len() <= x {
+                    line.push((' ', Style::default()));
+                }
+                line[x] = (c, st);
+                x += 1;
+                i += 1;
+            }
+        }
+        if lines.len() > 2048 {
+            let drop = lines.len() - 1024;
+            lines.drain(..drop);
+        }
+    }
+
+    let start = lines.len().saturating_sub(rows as usize);
+    for (r, line) in lines[start..].iter().enumerate() {
+        let y = y0 + r as u16;
+        if y >= fr.h {
+            break;
+        }
+        for (col, &(ch, st)) in line.iter().enumerate() {
+            if col as u16 >= area_w {
+                break;
+            }
+            fr.put(bx + col as u16, y, ch, st);
+        }
+    }
+}
+
 fn draw(app: &mut App) -> Result<()> {
     let (w, h) = terminal::size()?;
     let mut out = io::stdout();
@@ -1870,23 +2033,10 @@ fn draw(app: &mut App) -> Result<()> {
     // separador del shell (solo a la derecha del navegador)
     fr.text(bx, shell_top, &"─".repeat(area_w as usize), Style::default());
 
-    // salida del shell: últimas líneas (una menos: la penúltima es la ayuda)
+    // salida del shell: últimas líneas con colores ANSI y \r/\b interpretados
     let max_rows = h.saturating_sub(4).saturating_sub(shell_top) as usize;
     let available = (shell_rows.saturating_sub(2) as usize).min(max_rows);
-    let slines: Vec<String> = {
-        let shell = app.shell.output.lock().unwrap();
-        let raw = String::from_utf8_lossy(&shell);
-        let v: Vec<&str> = raw.lines().collect();
-        let start = v.len().saturating_sub(available);
-        v[start..]
-            .iter()
-            .map(|s| strip_ansi(s).replace('\r', ""))
-            .collect()
-    };
-    for (i, line) in slines.iter().enumerate() {
-        let clean: String = line.chars().take(area_w as usize).collect();
-        fr.text(bx, shell_top + 1 + i as u16, &clean, Style::default());
-    }
+    draw_shell_output(app, &mut fr, bx, shell_top + 1, available as u16, area_w);
 
     let mode = match app.mode {
         Mode::Normal => "NORMAL",
@@ -2028,8 +2178,12 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
         let icon = if e.is_dir() { "▸" } else { "·" };
         let text: String = format!(" {} {}", icon, name);
         let text: String = text.chars().take(name_w).collect();
+        let hidden = name.starts_with('.');
         let st = if sel {
             Style { reverse: true, ..Default::default() }
+        } else if hidden {
+            // ocultos: atenuados para distinguirlos
+            Style { fg: Some(Color::DarkGrey), ..Default::default() }
         } else if e.is_dir() {
             Style { fg: Some(Color::DarkYellow), ..Default::default() }
         } else {
