@@ -162,6 +162,18 @@ struct App {
     sudo_prompt: bool, // pidiendo contraseña sudo
     sudo_pass: String, // contraseña (se limpia tras usarla)
     sudo_text: String, // contenido a escribir vía sudo
+    // deshacer/rehacer
+    undo: Vec<(Vec<String>, usize, usize)>,
+    redo: Vec<(Vec<String>, usize, usize)>,
+    undo_kind: Option<&'static str>,
+    // contador numérico (12G) y números de línea
+    count: Option<usize>,
+    show_numbers: bool,
+    // marcadores de directorio del tree
+    bookmarks: Vec<PathBuf>,
+    // ventana de ayuda
+    help_open: bool,
+    help_scroll: usize,
 }
 
 impl App {
@@ -219,7 +231,7 @@ impl App {
     }
 
     fn ensure_hscroll(&mut self, width: usize) {
-        let editor_w = width.saturating_sub(7);
+        let editor_w = width.saturating_sub(self.gutter() + 1);
         if editor_w == 0 {
             return;
         }
@@ -246,6 +258,7 @@ impl App {
     }
 
     fn insert_char(&mut self, ch: char) {
+        self.push_undo("insert");
         let line = &mut self.lines[self.row];
         let byte = line
             .char_indices()
@@ -258,6 +271,7 @@ impl App {
     }
 
     fn newline(&mut self) {
+        self.push_undo("insert");
         let byte = self.lines[self.row]
             .char_indices()
             .nth(self.col)
@@ -273,6 +287,7 @@ impl App {
     }
 
     fn backspace(&mut self) {
+        self.push_undo("delete");
         if self.col > 0 {
             let byte = self.lines[self.row]
                 .char_indices()
@@ -293,6 +308,7 @@ impl App {
     }
 
     fn delete_char_at_cursor(&mut self) {
+        self.push_undo("delete");
         let len = self.line_len();
         if len == 0 {
             return;
@@ -312,6 +328,7 @@ impl App {
     }
 
     fn delete_line(&mut self) {
+        self.push_undo("line");
         if self.lines.len() <= 1 {
             self.lines[0].clear();
         } else {
@@ -327,6 +344,7 @@ impl App {
     }
 
     fn insert_line_below(&mut self) {
+        self.push_undo("line");
         self.lines.insert(self.row + 1, String::new());
         self.shift_folds_insert(self.row + 1);
         self.row += 1;
@@ -336,6 +354,7 @@ impl App {
     }
 
     fn insert_line_above(&mut self) {
+        self.push_undo("line");
         self.lines.insert(self.row, String::new());
         self.shift_folds_insert(self.row);
         self.col = 0;
@@ -344,6 +363,7 @@ impl App {
     }
 
     fn delete_selection(&mut self) {
+        self.push_undo("sel");
         let Some((ar, ac)) = self.anchor else { return };
         let (br, bc) = (self.row, self.col);
         let ((r1, c1), (r2, c2)) = if (ar, ac) <= (br, bc) {
@@ -492,6 +512,59 @@ impl App {
         Ok(())
     }
 
+    // ---------- deshacer / rehacer ----------
+    fn push_undo(&mut self, kind: &'static str) {
+        if self.undo_kind == Some(kind) {
+            return;
+        }
+        self.undo.push((self.lines.clone(), self.row, self.col));
+        if self.undo.len() > 300 {
+            self.undo.remove(0);
+        }
+        self.undo_kind = Some(kind);
+        self.redo.clear();
+    }
+
+    fn undo_edit(&mut self) {
+        if let Some((lines, row, col)) = self.undo.pop() {
+            self.redo.push((self.lines.clone(), self.row, self.col));
+            self.restore_state(lines, row, col);
+            self.status = "Deshecho".into();
+        } else {
+            self.status = "Nada que deshacer".into();
+        }
+        self.undo_kind = None;
+    }
+
+    fn redo_edit(&mut self) {
+        if let Some((lines, row, col)) = self.redo.pop() {
+            self.undo.push((self.lines.clone(), self.row, self.col));
+            self.restore_state(lines, row, col);
+            self.status = "Rehecho".into();
+        } else {
+            self.status = "Nada que rehacer".into();
+        }
+        self.undo_kind = None;
+    }
+
+    fn restore_state(&mut self, lines: Vec<String>, row: usize, col: usize) {
+        self.lines = lines;
+        self.row = row.min(self.lines.len().saturating_sub(1));
+        self.col = col;
+        self.clamp_col();
+        self.ensure_visible();
+        self.dirty = true;
+    }
+
+    /// ancho del margen izquierdo del editor (números de línea o un espacio)
+    fn gutter(&self) -> usize {
+        if self.show_numbers {
+            6
+        } else {
+            1
+        }
+    }
+
     // ---------- ia: selección del panel ----------
     /// líneas visibles del panel IA (historial + salida en curso)
     fn ai_pane_lines(&self, max_lines: usize) -> Vec<String> {
@@ -573,6 +646,9 @@ impl App {
         self.search_query.clear();
         self.matches.clear();
         self.pending = None;
+        self.undo.clear();
+        self.redo.clear();
+        self.undo_kind = None;
         self.dirty = false;
         self.read_only = !file_writable(&path);
         self.status = if self.read_only {
@@ -1029,6 +1105,14 @@ fn main() -> Result<()> {
         sudo_prompt: false,
         sudo_pass: String::new(),
         sudo_text: String::new(),
+        undo: Vec::new(),
+        redo: Vec::new(),
+        undo_kind: None,
+        count: None,
+        show_numbers: true,
+        bookmarks: Vec::new(),
+        help_open: false,
+        help_scroll: 0,
     };
 
     // abrir el fichero inicial con todos los headers plegados
@@ -1109,6 +1193,11 @@ fn run(app: &mut App) -> Result<()> {
                 // prompt de contraseña sudo: captura todas las teclas
                 if app.sudo_prompt {
                     handle_sudo_key(app, k);
+                    continue;
+                }
+                // ventana de ayuda: captura todas las teclas
+                if app.help_open {
+                    handle_help_key(app, k);
                     continue;
                 }
                 // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
@@ -1229,6 +1318,12 @@ fn run(app: &mut App) -> Result<()> {
                             app.send_ai_selection()?;
                             continue;
                         }
+                        KeyCode::Char('r')
+                            if matches!(app.mode, Mode::Normal | Mode::Insert | Mode::Visual) =>
+                        {
+                            app.redo_edit();
+                            continue;
+                        }
                         KeyCode::Char('n') if app.mode == Mode::Ai => {
                             app.ai_session_n += 1;
                             app.ai_lines.clear();
@@ -1276,6 +1371,113 @@ fn run(app: &mut App) -> Result<()> {
     Ok(())
 }
 
+const HELP_TEXT: &str = r#"PIGMACS · MANUAL COMPLETO
+═══════════════════════════
+NAVEGACIÓN ENTRE PANELES
+  Shift+←             tree de ficheros
+  Shift+→ / Shift+↑   editor (o panel IA)
+  Shift+↓             terminal
+  Ctrl+B              mostrar/ocultar y enfocar el tree
+  Ctrl+A              alternar editor <-> panel IA
+  Tab                 shell <-> ventana anterior
+  Ctrl+Shift+↑/↓      mover el borde editor/terminal
+
+EDITOR · MODO NORMAL
+  h j k l / ←↓↑→      mover el cursor
+  i / a / A           insertar (antes, después, fin de línea)
+  o / O               nueva línea debajo / encima
+  x                   borrar carácter · dd borrar línea
+  u                   deshacer · Ctrl+R rehacer
+  v                   selección visual
+  Ctrl+E              enviar selección (o línea entera) al shell
+  /                   buscar · n/N siguiente/anterior
+  m + letra           fijar marca · ' + letra saltar a ella
+  G / gg              final / principio · 12G ir a la línea 12
+  zn                  mostrar/ocultar números de línea
+  ?                   esta ayuda
+
+ORG MODE · PLIEGUES
+  Tab / za            plegar/desplegar cabecera
+  zc / zo             cerrar / abrir cabecera
+  zr / zm             abrir todo / plegar todo
+  (al abrir un fichero todo queda plegado)
+
+MODO INSERCIÓN
+  Esc                 volver a Normal
+  Enter / ←→↑↓        edición normal
+  Tab                 pliega la cabecera bajo el cursor
+
+MODO VISUAL
+  h j k l / ←↓↑→      extender la selección
+  x                   borrar la selección
+  Esc / v             salir
+
+TERMINAL
+  ↑↓                  historial de comandos (colores ANSI incluidos)
+  Ctrl+K              limpiar la pantalla del terminal
+
+TREE DE FICHEROS
+  j k                 mover · l/Enter abrir · h subir
+  g / G               principio / fin
+  b                   marcar/desmarcar el directorio actual
+  B                   saltar al siguiente marcador (★ en el título)
+  Esc                 volver al editor (el tree sigue visible)
+
+PANEL IA (pi coding agent)
+  Enter               enviar la pregunta
+  ↑↓                  historial de preguntas
+  v                   seleccionar texto de la respuesta
+  Ctrl+E              enviar la selección al shell
+  Ctrl+N              nueva conversación
+  Esc                 cancelar la consulta en curso
+
+GUARDAR · SUDO
+  Ctrl+S              guardar; si el fichero es de root pide contraseña
+  (en el prompt sudo: Enter acepta, Esc/Ctrl+C cancela)
+
+GENERAL
+  Ctrl+Q              salir (avisa si hay cambios sin guardar)
+  Ctrl+S              guardar
+  Ctrl+K              limpiar la terminal
+"#;
+
+fn handle_help_key(app: &mut App, k: KeyEvent) {
+    match k.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.help_open = false;
+            app.help_scroll = 0;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.help_scroll = app.help_scroll.saturating_add(1)
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.help_scroll = app.help_scroll.saturating_sub(1)
+        }
+        KeyCode::Char('g') => app.help_scroll = 0,
+        KeyCode::Char('G') => app.help_scroll = usize::MAX,
+        _ => {}
+    }
+}
+
+fn draw_help(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
+    let lines: Vec<&str> = HELP_TEXT.lines().collect();
+    let max = editor_rows.saturating_sub(1) as usize;
+    let start = app.help_scroll.min(lines.len().saturating_sub(max.max(1)));
+    let end = (start + max).min(lines.len());
+    for (i, l) in lines[start..end].iter().enumerate() {
+        let clean: String = l.chars().take(area_w as usize).collect();
+        let st = if i == 0 {
+            Style {
+                bold: true,
+                ..Default::default()
+            }
+        } else {
+            Style::default()
+        };
+        fr.text(bx, i as u16, &clean, st);
+    }
+}
+
 fn handle_sudo_key(app: &mut App, k: KeyEvent) {
     match k.code {
         KeyCode::Esc => {
@@ -1311,6 +1513,29 @@ fn handle_browser_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => app.browser_up(),
         KeyCode::Char('g') => app.browser.go_top(),
         KeyCode::Char('G') => app.browser.go_bottom(),
+        KeyCode::Char('b') => {
+            if let Some(pos) = app.bookmarks.iter().position(|p| p == &app.browser.cwd) {
+                app.bookmarks.remove(pos);
+                app.status = "Directorio desmarcado".into();
+            } else {
+                app.bookmarks.push(app.browser.cwd.clone());
+                app.status = format!("Marcado: {}", app.browser.cwd.display());
+            }
+        }
+        KeyCode::Char('B') => {
+            if app.bookmarks.is_empty() {
+                app.status = "Sin marcadores: b marca el directorio actual".into();
+            } else {
+                let cur = app.bookmarks.iter().position(|p| p == &app.browser.cwd);
+                let next = match cur {
+                    Some(i) => (i + 1) % app.bookmarks.len(),
+                    None => 0,
+                };
+                let dir = app.bookmarks[next].clone();
+                app.browser.cd(dir);
+                app.status = format!("Marcador: {}", app.browser.cwd.display());
+            }
+        }
         KeyCode::Esc => {
             app.mode = app.top_mode;
         }
@@ -1398,6 +1623,7 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                         | KeyCode::Char('c')
                         | KeyCode::Char('r')
                         | KeyCode::Char('m')
+                        | KeyCode::Char('n')
                 );
             let mark_seq = matches!(app.pending, Some('m') | Some('\''))
                 && matches!(k.code, KeyCode::Char(c) if c.is_ascii_lowercase());
@@ -1412,6 +1638,12 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 || mark_seq;
             if !repeatable {
                 app.pending = None;
+            }
+            // el contador numérico se mantiene con dígitos y se consume en G/gg
+            if !matches!(k.code, KeyCode::Char(c) if c.is_ascii_digit())
+                && !matches!(k.code, KeyCode::Char('g') | KeyCode::Char('G'))
+            {
+                app.count = None;
             }
             match k.code {
                 // marcas de vim: m<x> fija la posición · '<x> salta a ella
@@ -1432,6 +1664,11 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     }
                     app.pending = None;
                 }
+                // contador numérico: 12G → línea 12 · 5gg → línea 5
+                KeyCode::Char(d) if d.is_ascii_digit() && (app.count.is_some() || d != '0') => {
+                    let n = (d as u8 - b'0') as usize;
+                    app.count = Some(app.count.unwrap_or(0) * 10 + n);
+                }
                 KeyCode::Char('h') | KeyCode::Left => app.move_cursor(0, -1),
                 KeyCode::Char('j') | KeyCode::Down => app.move_cursor(1, 0),
                 KeyCode::Char('k') | KeyCode::Up => app.move_cursor(-1, 0),
@@ -1446,9 +1683,10 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 | KeyCode::Char('c')
                 | KeyCode::Char('r')
                 | KeyCode::Char('m')
+                | KeyCode::Char('n')
                     if app.pending == Some('z') =>
                 {
-                    // comandos de plegado: za alternar · zc cerrar · zo abrir · zr todo abierto · zm todo cerrado
+                    // plegado: za alternar · zc cerrar · zo abrir · zr todo abierto · zm todo cerrado · zn números
                     let r = app.row;
                     match k.code {
                         KeyCode::Char('a') => app.toggle_fold(r),
@@ -1466,21 +1704,41 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                         }
                         KeyCode::Char('r') => app.unfold_all(),
                         KeyCode::Char('m') => app.fold_all(),
+                        KeyCode::Char('n') => {
+                            app.show_numbers = !app.show_numbers;
+                            app.status = if app.show_numbers {
+                                "Números de línea: sí".into()
+                            } else {
+                                "Números de línea: no".into()
+                            };
+                        }
                         _ => {}
                     }
                     app.pending = None;
                 }
                 KeyCode::Char('g') if app.pending == Some('g') => {
-                    app.row = app.first_visible();
+                    let target = app
+                        .count
+                        .map(|c| c.saturating_sub(1))
+                        .unwrap_or_else(|| app.first_visible());
+                    app.row = target.min(app.last_visible());
                     app.col = 0;
+                    app.count = None;
                     app.pending = None;
+                    app.reveal_row(app.row);
                     app.ensure_visible();
                 }
                 KeyCode::Char('g') => app.pending = Some('g'),
                 KeyCode::Char('G') => {
-                    app.row = app.last_visible();
+                    let last = app.last_visible();
+                    app.row = app
+                        .count
+                        .map(|c| c.saturating_sub(1).min(last))
+                        .unwrap_or(last);
                     app.col = 0;
+                    app.count = None;
                     app.pending = None;
+                    app.reveal_row(app.row);
                     app.ensure_visible();
                 }
                 KeyCode::Char('0') | KeyCode::Home => {
@@ -1500,6 +1758,7 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 }
                 KeyCode::Char('d') => app.pending = Some('d'),
                 KeyCode::Char('x') => app.delete_char_at_cursor(),
+                KeyCode::Char('u') => app.undo_edit(),
                 KeyCode::Char('i') => app.mode = Mode::Insert,
                 KeyCode::Char('a') => {
                     if app.col < app.line_len() {
@@ -1538,6 +1797,11 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 KeyCode::Char('/') => {
                     app.searching = true;
                     app.search_query.clear();
+                    app.pending = None;
+                }
+                KeyCode::Char('?') => {
+                    app.help_open = true;
+                    app.help_scroll = 0;
                     app.pending = None;
                 }
                 KeyCode::Char('v') => {
@@ -2024,7 +2288,9 @@ fn draw(app: &mut App) -> Result<()> {
         draw_browser(app, bx, h, &mut fr);
     }
 
-    if app.mode == Mode::Ai {
+    if app.help_open {
+        draw_help(app, editor_rows, bx, area_w, &mut fr);
+    } else if app.mode == Mode::Ai {
         draw_ai_pane(app, editor_rows, bx, area_w, &mut fr);
     } else if app.mode != Mode::Browser {
         draw_editor_lines(app, editor_rows, bx, area_w, &mut fr);
@@ -2069,10 +2335,10 @@ fn draw(app: &mut App) -> Result<()> {
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
     let help = match app.mode {
         Mode::Normal | Mode::Insert | Mode::Visual => {
-            "Ctrl+B tree · i · Esc · Tab/za plegar · m marca · 'a saltar · Ctrl+A IA · Ctrl+E enviar · Ctrl+S · Ctrl+Q salir"
+            "Ctrl+B tree · i · u deshacer · Ctrl+R rehacer · Tab/za plegar · m marca · ? ayuda · Ctrl+E enviar · Ctrl+S · Ctrl+Q"
         }
         Mode::Browser => {
-            "j/k mover · l entrar · h subir · Enter abrir · g/G extremos · Esc editor · Ctrl+B ocultar"
+            "j/k mover · l/h entrar/subir · b marca · B saltar · g/G extremos · Esc editor · Ctrl+B ocultar"
         }
         Mode::Ai => {
             "Enter enviar · ↑/↓ historial · v seleccionar · Ctrl+E enviar · Ctrl+N nueva · Ctrl+B tree · Esc cancelar · Tab shell"
@@ -2098,7 +2364,7 @@ fn draw(app: &mut App) -> Result<()> {
         && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell)
     {
         let y = app.screen_row_of(app.row).min(editor_rows.saturating_sub(1) as usize) as u16;
-        let x = (bx as usize + 6 + app.col.saturating_sub(app.left))
+        let x = (bx as usize + app.gutter() + app.col.saturating_sub(app.left))
             .min(w.saturating_sub(1) as usize) as u16;
         let ch = app
             .lines
@@ -2153,10 +2419,11 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| app.browser.cwd.display().to_string());
+    let starred = app.bookmarks.iter().any(|p| p == &app.browser.cwd);
     let title: String = if app.mode == Mode::Browser {
-        format!("┌ {} ", dirname)
+        format!("┌ {} {} ", dirname, if starred { "★" } else { "" })
     } else {
-        format!("┌ {} · Ctrl+B ", dirname)
+        format!("┌ {} {} · Ctrl+B ", dirname, if starred { "★" } else { "" })
     }
     .chars()
     .take(bx.saturating_sub(1) as usize)
@@ -2211,7 +2478,8 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
 fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
     let mut real = app.top;
     let mut screen_y = 0u16;
-    let max_content = area_w.saturating_sub(6) as usize;
+    let gutter = app.gutter();
+    let max_content = area_w.saturating_sub(gutter as u16) as usize;
     let mut in_src = false;
 
     while screen_y < editor_rows && real < app.lines.len() {
@@ -2238,11 +2506,15 @@ fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: 
             (None, false)
         };
 
-        fr.text(bx, screen_y, &format!("{:>5} ", idx + 1), Style::default());
+        if app.show_numbers {
+            fr.text(bx, screen_y, &format!("{:>5} ", idx + 1), Style::default());
+        } else {
+            fr.put(bx, screen_y, ' ', Style::default());
+        }
 
         let mut printed = 0usize;
         for (x, ch) in line.chars().skip(app.left).enumerate() {
-            if x + 6 >= area_w as usize {
+            if x + gutter >= area_w as usize {
                 break;
             }
             printed += 1;
@@ -2268,14 +2540,14 @@ fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: 
             } else {
                 Style { fg, bold, ..Default::default() }
             };
-            fr.put(bx + 6 + x as u16, screen_y, ch, st);
+            fr.put(bx + gutter as u16 + x as u16, screen_y, ch, st);
         }
 
         if folded_here {
             // marcador de plegado al final del texto visible
             if printed + 2 < max_content {
                 fr.text(
-                    bx + 6 + printed as u16,
+                    bx + gutter as u16 + printed as u16,
                     screen_y,
                     " [+]",
                     Style {
