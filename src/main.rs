@@ -40,6 +40,17 @@ struct Shell {
     _child: Box<dyn Child + Send>,
 }
 
+impl Shell {
+    fn resize(&mut self, rows: u16, cols: u16) {
+        let _ = self._master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+    }
+}
+
 struct Browser {
     active: bool,
     cwd: PathBuf,
@@ -139,6 +150,12 @@ struct App {
     ai_out: Arc<Mutex<String>>,
     ai_flag: Arc<AtomicBool>,
     ai_child: Arc<Mutex<Option<std::process::Child>>>,
+    ai_session_n: usize, // nº de conversación pi (Ctrl+N la reinicia)
+    ai_selecting: bool,
+    ai_sel_anchor: Option<usize>,
+    ai_sel_cursor: usize,
+    shell_rows: u16,
+    work_dir: PathBuf,
 }
 
 impl App {
@@ -390,6 +407,62 @@ impl App {
         Ok(())
     }
 
+    // ---------- ia: selección del panel ----------
+    /// líneas visibles del panel IA (historial + salida en curso)
+    fn ai_pane_lines(&self, max_lines: usize) -> Vec<String> {
+        let mut all: Vec<String> = self.ai_lines.clone();
+        if self.ai_running {
+            let cur = self.ai_out.lock().unwrap();
+            for l in cur.split('\n') {
+                if !l.is_empty() {
+                    all.push(l.to_string());
+                }
+            }
+        }
+        let start = all.len().saturating_sub(max_lines);
+        all[start..].to_vec()
+    }
+
+    /// envía la selección hecha en el panel IA al shell
+    fn send_ai_selection(&mut self) -> Result<()> {
+        let Some(a) = self.ai_sel_anchor else {
+            self.status = "Sin selección: pulsa v en el panel IA".into();
+            return Ok(());
+        };
+        let (r1, r2) = if a <= self.ai_sel_cursor {
+            (a, self.ai_sel_cursor)
+        } else {
+            (self.ai_sel_cursor, a)
+        };
+        let (_, h) = terminal::size()?;
+        let (editor_rows, _) = layout(h, self.shell_rows);
+        let max_lines = editor_rows.saturating_sub(3) as usize;
+        let pane = self.ai_pane_lines(max_lines.max(1));
+        let mut s = String::new();
+        let last = r2.min(pane.len().saturating_sub(1));
+        for i in r1..=last {
+            if let Some(l) = pane.get(i) {
+                let clean = strip_ansi(l).replace('\r', "");
+                if !clean.trim().is_empty() {
+                    s.push_str(&clean);
+                    s.push('\n');
+                }
+            }
+        }
+        let s = s.trim_end().to_string();
+        if s.is_empty() {
+            self.status = "Selección IA vacía".into();
+            return Ok(());
+        }
+        self.shell.writer.write_all(s.as_bytes())?;
+        self.shell.writer.write_all(b"\n")?;
+        self.shell.writer.flush()?;
+        self.ai_selecting = false;
+        self.ai_sel_anchor = None;
+        self.status = "Enviado al shell desde IA".into();
+        Ok(())
+    }
+
     // ---------- navegador de ficheros ----------
     fn open_file(&mut self, path: PathBuf) {
         let text = fs::read_to_string(&path).unwrap_or_default();
@@ -635,21 +708,22 @@ impl App {
         let out = Arc::clone(&self.ai_out);
         let flag = Arc::clone(&self.ai_flag);
         let child_slot = Arc::clone(&self.ai_child);
-        let dir = self
-            .path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+        let dir = self.work_dir.clone();
+        let session = format!("pigmacs_ai_{}", self.ai_session_n);
 
         thread::spawn(move || {
-            let mut cmd = Command::new("opencode");
-            cmd.arg("run");
+            // pi no interactivo con sesión fija: la conversación conserva el contexto
+            let mut cmd = Command::new("pi");
+            cmd.arg("-p");
+            cmd.arg("--session-id").arg(&session);
+            cmd.arg("--no-skills");
+            cmd.arg("--no-extensions");
             if let Ok(m) = env::var("PIGMACS_AI_MODEL") {
                 if !m.trim().is_empty() {
                     cmd.arg("--model").arg(m.trim());
                 }
             }
-            cmd.arg("--pure").arg(&prompt);
+            cmd.arg(&prompt);
             cmd.current_dir(dir);
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
@@ -657,7 +731,7 @@ impl App {
                 Ok(c) => c,
                 Err(e) => {
                     out.lock().unwrap().push_str(&format!(
-                        "No se pudo lanzar opencode: {} (¿está en PATH?)",
+                        "No se pudo lanzar pi: {} (¿está en PATH?)",
                         e
                     ));
                     flag.store(false, Ordering::SeqCst);
@@ -666,9 +740,9 @@ impl App {
             };
             let stdout = child.stdout.take();
             *child_slot.lock().unwrap() = Some(child);
+            let mut tmp = String::new();
             if let Some(mut reader) = stdout {
                 let mut buf = [0u8; 8192];
-                let mut tmp = String::new();
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
@@ -679,8 +753,22 @@ impl App {
                     }
                 }
             }
+            // si pi falla sin salida, mostrar su stderr como diagnóstico
+            let mut stderr_text = String::new();
+            if let Some(mut er) = child_slot.lock().unwrap().as_mut().and_then(|c| c.stderr.take()) {
+                let mut buf = [0u8; 4096];
+                loop {
+                    match er.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => stderr_text.push_str(&String::from_utf8_lossy(&buf[..n])),
+                    }
+                }
+            }
             if let Some(mut c) = child_slot.lock().unwrap().take() {
                 let _ = c.wait();
+            }
+            if tmp.is_empty() && !stderr_text.is_empty() {
+                *out.lock().unwrap() = format!("pi: {}", strip_ansi(&stderr_text));
             }
             flag.store(false, Ordering::SeqCst);
         });
@@ -738,7 +826,8 @@ fn main() -> Result<()> {
 
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
     let shell_rows = 9.min(rows.saturating_sub(5));
-    let editor_rows = rows.saturating_sub(shell_rows + 2).max(1);
+    // directorio fijo para pi: la conversación vive en una sesión por lanzamiento
+    let work_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let pty = native_pty_system().openpty(PtySize {
         rows: shell_rows,
@@ -800,7 +889,7 @@ fn main() -> Result<()> {
         top_mode: Mode::Normal,
         dirty: false,
         shell,
-        status: "i escribir · Tab plegar · Ctrl+B ficheros · Ctrl+A IA · Tab shell · Ctrl+S guardar · Ctrl+Q salir".into(),
+        status: "Ctrl+B tree · i escribir · Tab plegar · Ctrl+A IA · Ctrl+E enviar · Ctrl+Shift+↑↓ borde · Ctrl+Q salir".into(),
         pending: None,
         search_query: String::new(),
         searching: false,
@@ -816,11 +905,17 @@ fn main() -> Result<()> {
         ai_out: Arc::new(Mutex::new(String::new())),
         ai_flag: Arc::new(AtomicBool::new(false)),
         ai_child: Arc::new(Mutex::new(None)),
+        ai_session_n: 0,
+        ai_selecting: false,
+        ai_sel_anchor: None,
+        ai_sel_cursor: 0,
+        shell_rows,
+        work_dir,
     };
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, Hide)?;
-    let result = run(&mut app, editor_rows, shell_rows);
+    let result = run(&mut app);
     execute!(io::stdout(), Show, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
 
@@ -836,14 +931,44 @@ fn browser_width(w: u16) -> u16 {
     (w / 4).clamp(24, 40)
 }
 
-fn run(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
+/// reparto de filas: editor arriba, shell abajo, 2 filas fijas (ayuda + estado)
+fn layout(h: u16, shell_rows: u16) -> (u16, u16) {
+    let shell_rows = shell_rows.clamp(3, h.saturating_sub(5).max(3));
+    let editor_rows = h.saturating_sub(shell_rows + 2).max(1);
+    (editor_rows, shell_rows)
+}
+
+fn run(app: &mut App) -> Result<()> {
     loop {
         app.ai_flush();
-        draw(app, editor_rows, shell_rows)?;
+        draw(app)?;
 
         if event::poll(Duration::from_millis(20))? {
             let ev = event::read()?;
+            if let Event::Resize(c, r) = ev {
+                let (_, sr) = layout(r, app.shell_rows);
+                app.shell_rows = sr;
+                app.shell.resize(sr, c);
+                continue;
+            }
             if let Event::Key(k) = ev {
+                // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
+                if k.modifiers.contains(KeyModifiers::CONTROL)
+                    && k.modifiers.contains(KeyModifiers::SHIFT)
+                {
+                    match k.code {
+                        KeyCode::Up => app.shell_rows = app.shell_rows.saturating_sub(1),
+                        KeyCode::Down => app.shell_rows = app.shell_rows.saturating_add(1),
+                        _ => {}
+                    }
+                    if matches!(k.code, KeyCode::Up | KeyCode::Down) {
+                        let (c, r) = terminal::size()?;
+                        app.shell_rows = app.shell_rows.clamp(3, r.saturating_sub(5).max(3));
+                        app.shell.resize(app.shell_rows, c);
+                        app.status = format!("Borde movido · shell {} líneas", app.shell_rows);
+                        continue;
+                    }
+                }
                 if app.searching {
                     handle_search_key(app, k);
                     continue;
@@ -904,6 +1029,19 @@ fn run(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
                             app.send_selection()?;
                             continue;
                         }
+                        KeyCode::Char('e') if app.mode == Mode::Ai => {
+                            app.send_ai_selection()?;
+                            continue;
+                        }
+                        KeyCode::Char('n') if app.mode == Mode::Ai => {
+                            app.ai_session_n += 1;
+                            app.ai_lines.clear();
+                            app.ai_input.clear();
+                            app.ai_selecting = false;
+                            app.ai_sel_anchor = None;
+                            app.status = "Nueva conversación IA (nueva sesión pi)".into();
+                            continue;
+                        }
                         KeyCode::Tab | KeyCode::BackTab => {
                             app.mode = match app.mode {
                                 Mode::Shell => app.top_mode,
@@ -958,6 +1096,25 @@ fn handle_browser_key(app: &mut App, k: KeyEvent) {
 }
 
 fn handle_ai_key(app: &mut App, k: KeyEvent) {
+    // modo selección dentro del panel IA: v entrar · j/k mover · Ctrl+E enviar · Esc salir
+    if app.ai_selecting {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('v') => {
+                app.ai_selecting = false;
+                app.ai_sel_anchor = None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                app.ai_sel_cursor = app.ai_sel_cursor.saturating_add(1)
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.ai_sel_cursor = app.ai_sel_cursor.saturating_sub(1)
+            }
+            KeyCode::Char('g') => app.ai_sel_cursor = 0,
+            KeyCode::Char('G') => app.ai_sel_cursor = usize::MAX,
+            _ => {}
+        }
+        return;
+    }
     match k.code {
         KeyCode::Esc => {
             if app.ai_running {
@@ -966,6 +1123,12 @@ fn handle_ai_key(app: &mut App, k: KeyEvent) {
         }
         KeyCode::Enter => {
             app.ai_start();
+        }
+        KeyCode::Char('v') => {
+            app.ai_selecting = true;
+            app.ai_sel_anchor = Some(0);
+            app.ai_sel_cursor = 0;
+            app.status = "Selecciona con j/k, envía con Ctrl+E, sal con Esc".into();
         }
         KeyCode::Backspace => {
             app.ai_input.pop();
@@ -1301,11 +1464,11 @@ fn org_line_style(app: &App, idx: usize) -> Option<(Color, bool)> {
     None
 }
 
-fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
+fn draw(app: &mut App) -> Result<()> {
     let (w, h) = terminal::size()?;
     let mut out = io::stdout();
 
-    let editor_rows = editor_rows.min(h.saturating_sub(3));
+    let (editor_rows, shell_rows) = layout(h, app.shell_rows);
     let shell_top = editor_rows + 1;
     let status_y = h.saturating_sub(1);
 
@@ -1394,16 +1557,16 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
     let help = match app.mode {
         Mode::Normal | Mode::Insert | Mode::Visual => {
-            "i escribir · Esc volver · Tab/za plegar · Ctrl+B ficheros · Ctrl+A IA · Tab shell · Ctrl+E enviar · Ctrl+S guardar · Ctrl+Q salir"
+            "Ctrl+B tree · i escribir · Esc · Tab/za plegar · Ctrl+A IA · Tab shell · Ctrl+E enviar · Ctrl+S guardar · Ctrl+Shift+↑↓ borde · Ctrl+Q salir"
         }
         Mode::Browser => {
             "j/k mover · l entrar · h subir · Enter abrir · g/G extremos · Esc editor · Ctrl+B ocultar"
         }
         Mode::Ai => {
-            "Enter enviar · ↑/↓ historial · Esc cancelar · Ctrl+A editor · Tab shell"
+            "Enter enviar · ↑/↓ historial · v seleccionar · Ctrl+E enviar · Ctrl+N nueva · Ctrl+B tree · Esc cancelar · Tab shell"
         }
         Mode::Shell => {
-            "escribe comandos · Shift+Tab editor · Ctrl+E enviar selección · Ctrl+Q salir"
+            "escribe comandos · Shift+Tab editor · Ctrl+B tree · Ctrl+E enviar · Ctrl+Shift+↑↓ borde · Ctrl+Q salir"
         },
     };
     let help_text: String = help.chars().take(w as usize).collect();
@@ -1661,9 +1824,9 @@ fn draw_ai_pane(
     out: &mut io::Stdout,
 ) -> Result<()> {
     let title = if app.ai_running {
-        " IA · opencode · procesando…"
+        " IA · pi · procesando…"
     } else {
-        " IA · opencode · escribe tu pregunta y pulsa Enter (Esc cancela)"
+        " IA · pi · escribe tu pregunta y pulsa Enter (Esc cancela)"
     };
     queue!(
         out,
@@ -1686,14 +1849,28 @@ fn draw_ai_pane(
 
     let max_lines = editor_rows.saturating_sub(3) as usize;
     let start = all.len().saturating_sub(max_lines);
+    let cur = app.ai_sel_cursor.min(max_lines.saturating_sub(1));
     for (i, l) in all[start..].iter().enumerate() {
         let clean: String = strip_ansi(l).chars().take(area_w as usize).collect();
+        let selected = app.ai_selecting
+            && app.ai_sel_anchor.map_or(false, |a| {
+                let (r1, r2) = if a <= cur { (a, cur) } else { (cur, a) };
+                i >= r1 && i <= r2
+            });
+        if selected {
+            queue!(out, SetAttribute(Attribute::Reverse))?;
+        } else if app.ai_selecting && i == cur {
+            queue!(out, SetForegroundColor(Color::DarkYellow))?;
+        }
         queue!(
             out,
             MoveTo(bx, 1 + i as u16),
             Clear(ClearType::UntilNewLine),
             Print(clean)
         )?;
+        if selected || (app.ai_selecting && i == cur) {
+            queue!(out, SetAttribute(Attribute::Reset))?;
+        }
     }
 
     let input_row = editor_rows.saturating_sub(1);
