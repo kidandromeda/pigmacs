@@ -29,6 +29,7 @@ enum Mode {
     Visual,
     Shell,
     Ai,
+    Browser,
 }
 
 struct Shell {
@@ -37,6 +38,74 @@ struct Shell {
     // se conservan a propósito: mantienen el PTY abierto y al hijo vivo
     _master: Box<dyn MasterPty + Send>,
     _child: Box<dyn Child + Send>,
+}
+
+struct Browser {
+    active: bool,
+    cwd: PathBuf,
+    entries: Vec<PathBuf>,
+    cursor: usize,
+    scroll: usize,
+}
+
+impl Browser {
+    fn refresh(&mut self) {
+        self.entries.clear();
+        let Ok(rd) = fs::read_dir(&self.cwd) else { return };
+        let mut dirs = Vec::new();
+        let mut files = Vec::new();
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                dirs.push(name);
+            } else {
+                files.push(name);
+            }
+        }
+        dirs.sort();
+        files.sort();
+        for d in dirs {
+            self.entries.push(self.cwd.join(d));
+        }
+        for f in files {
+            self.entries.push(self.cwd.join(f));
+        }
+        if self.cursor >= self.entries.len() {
+            self.cursor = self.entries.len().saturating_sub(1);
+        }
+    }
+
+    fn cd(&mut self, dir: PathBuf) {
+        self.cwd = dir;
+        self.cursor = 0;
+        self.scroll = 0;
+        self.refresh();
+    }
+
+    fn cursor_up(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn cursor_down(&mut self) {
+        if self.cursor + 1 < self.entries.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn current(&self) -> Option<PathBuf> {
+        self.entries.get(self.cursor).cloned()
+    }
+
+    fn go_top(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn go_bottom(&mut self) {
+        self.cursor = self.entries.len().saturating_sub(1);
+    }
 }
 
 struct App {
@@ -59,6 +128,8 @@ struct App {
     match_idx: usize,
     // org
     folded: HashSet<usize>,
+    // navegador
+    browser: Browser,
     // ia
     ai_lines: Vec<String>,
     ai_input: String,
@@ -317,6 +388,48 @@ impl App {
         self.anchor = None;
         self.status = "Enviado al shell".into();
         Ok(())
+    }
+
+    // ---------- navegador de ficheros ----------
+    fn open_file(&mut self, path: PathBuf) {
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        let lines = if text.is_empty() {
+            vec![String::new()]
+        } else {
+            text.lines().map(str::to_owned).collect()
+        };
+        self.path = path.clone();
+        self.lines = lines;
+        self.row = 0;
+        self.col = 0;
+        self.top = 0;
+        self.left = 0;
+        self.anchor = None;
+        self.folded.clear();
+        self.search_query.clear();
+        self.matches.clear();
+        self.pending = None;
+        self.dirty = false;
+        self.status = format!("Abierto: {}", path.display());
+        self.mode = self.top_mode;
+    }
+
+    fn browser_enter(&mut self) {
+        let Some(p) = self.browser.current() else { return };
+        if p.is_dir() {
+            self.browser.cd(p);
+        } else {
+            self.open_file(p);
+        }
+    }
+
+    fn browser_up(&mut self) {
+        if let Some(parent) = self.browser.cwd.parent() {
+            let p = parent.to_path_buf();
+            if !p.as_os_str().is_empty() {
+                self.browser.cd(p);
+            }
+        }
     }
 
     // ---------- org: cabeceras y plegado ----------
@@ -660,6 +773,21 @@ fn main() -> Result<()> {
         _child: child,
     };
 
+    let cwd = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let mut browser = Browser {
+        active: true,
+        cwd,
+        entries: Vec::new(),
+        cursor: 0,
+        scroll: 0,
+    };
+    browser.refresh();
+
     let mut app = App {
         path,
         lines,
@@ -672,13 +800,14 @@ fn main() -> Result<()> {
         top_mode: Mode::Normal,
         dirty: false,
         shell,
-        status: "i escribir · hjkl mover · Tab plegar · z a/o/c/r/m · Ctrl+A IA · Tab shell · Ctrl+S guardar · Ctrl+Q salir".into(),
+        status: "i escribir · Tab plegar · Ctrl+B ficheros · Ctrl+A IA · Tab shell · Ctrl+S guardar · Ctrl+Q salir".into(),
         pending: None,
         search_query: String::new(),
         searching: false,
         matches: Vec::new(),
         match_idx: 0,
         folded: HashSet::new(),
+        browser,
         ai_lines: Vec::new(),
         ai_input: String::new(),
         ai_history: Vec::new(),
@@ -701,6 +830,10 @@ fn main() -> Result<()> {
     }
 
     result
+}
+
+fn browser_width(w: u16) -> u16 {
+    (w / 4).clamp(24, 40)
 }
 
 fn run(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
@@ -736,11 +869,29 @@ fn run(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
                         }
                         KeyCode::Char('a') => {
                             // alternar editor <-> IA
+                            if app.mode != Mode::Shell {
+                                app.top_mode = app.mode;
+                            }
                             app.mode = match app.mode {
                                 Mode::Ai => Mode::Normal,
                                 _ => Mode::Ai,
                             };
-                            app.top_mode = app.mode;
+                            continue;
+                        }
+                        KeyCode::Char('b') => {
+                            // alternar navegador de ficheros:
+                            // 1ª pulsación: visible + foco · 2ª: ocultar · Esc: foco al editor (sigue visible)
+                            if app.mode == Mode::Browser {
+                                app.browser.active = false;
+                                app.mode = app.top_mode;
+                            } else {
+                                if app.mode != Mode::Shell {
+                                    app.top_mode = app.mode;
+                                }
+                                app.browser.active = true;
+                                app.browser.refresh();
+                                app.mode = Mode::Browser;
+                            }
                             continue;
                         }
                         KeyCode::Enter if matches!(app.mode, Mode::Normal | Mode::Visual) => {
@@ -779,12 +930,31 @@ fn run(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
                     handle_ai_key(app, k);
                     continue;
                 }
+                if app.mode == Mode::Browser {
+                    handle_browser_key(app, k);
+                    continue;
+                }
 
                 handle_editor_key(app, k);
             }
         }
     }
     Ok(())
+}
+
+fn handle_browser_key(app: &mut App, k: KeyEvent) {
+    match k.code {
+        KeyCode::Char('j') | KeyCode::Down => app.browser.cursor_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.browser.cursor_up(),
+        KeyCode::Char('l') | KeyCode::Enter | KeyCode::Right => app.browser_enter(),
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Backspace => app.browser_up(),
+        KeyCode::Char('g') => app.browser.go_top(),
+        KeyCode::Char('G') => app.browser.go_bottom(),
+        KeyCode::Esc => {
+            app.mode = app.top_mode;
+        }
+        _ => {}
+    }
 }
 
 fn handle_ai_key(app: &mut App, k: KeyEvent) {
@@ -1012,7 +1182,7 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
             KeyCode::Char('x') | KeyCode::Delete => app.delete_selection(),
             _ => {}
         },
-        Mode::Shell | Mode::Ai => {}
+        Mode::Shell | Mode::Ai | Mode::Browser => {}
     }
 }
 
@@ -1102,6 +1272,35 @@ fn send_key_to_shell(writer: &mut Box<dyn Write + Send>, k: KeyEvent) -> Result<
     Ok(())
 }
 
+/// color de una línea org (None = por defecto)
+fn org_line_style(app: &App, idx: usize) -> Option<(Color, bool)> {
+    let line = app.lines.get(idx)?;
+    let lvl = app.header_level(idx);
+    if let Some(l) = lvl {
+        let rest: String = line.chars().skip(l as usize + 1).collect();
+        if rest.starts_with("TODO") {
+            return Some((Color::Red, false));
+        }
+        if rest.starts_with("DONE") {
+            return Some((Color::Green, false));
+        }
+        let c = match l {
+            1 => Color::Cyan,
+            2 => Color::Green,
+            3 => Color::Yellow,
+            _ => Color::Magenta,
+        };
+        return Some((c, l == 1));
+    }
+    if line.starts_with("#+BEGIN_SRC") || line.starts_with("#+END_SRC") {
+        return Some((Color::Magenta, false));
+    }
+    if line.starts_with("#+") {
+        return Some((Color::DarkYellow, false));
+    }
+    None
+}
+
 fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
     let (w, h) = terminal::size()?;
     let mut out = io::stdout();
@@ -1120,7 +1319,10 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         app.reveal_row(app.row);
     }
     app.ensure_visible(editor_rows.saturating_sub(1) as usize);
-    app.ensure_hscroll(w as usize);
+
+    let bx: u16 = if app.browser.active { browser_width(w) } else { 0 };
+    let area_w = w.saturating_sub(bx);
+    app.ensure_hscroll(area_w as usize);
 
     if !app.search_query.is_empty() {
         app.matches = compute_matches(&app.lines, &app.search_query);
@@ -1131,13 +1333,18 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
 
     queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
 
-    if app.mode == Mode::Ai {
-        draw_ai_pane(app, editor_rows, w, &mut out)?;
-    } else {
-        draw_editor_lines(app, editor_rows, w, &mut out)?;
+    if app.browser.active {
+        draw_browser(app, bx, h, &mut out)?;
     }
 
-    queue!(out, MoveTo(0, shell_top), Print("─".repeat(w as usize)))?;
+    if app.mode == Mode::Ai {
+        draw_ai_pane(app, editor_rows, bx, area_w, &mut out)?;
+    } else if app.mode != Mode::Browser {
+        draw_editor_lines(app, editor_rows, bx, area_w, &mut out)?;
+    }
+
+    // separador del shell (solo a la derecha del navegador)
+    queue!(out, MoveTo(bx, shell_top), Print("─".repeat(area_w as usize)))?;
 
     let shell = app.shell.output.lock().unwrap();
     let raw = String::from_utf8_lossy(&shell);
@@ -1149,11 +1356,11 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         let clean: String = strip_ansi(line)
             .replace('\r', "")
             .chars()
-            .take(w as usize)
+            .take(area_w as usize)
             .collect();
         queue!(
             out,
-            MoveTo(0, shell_top + 1 + i as u16),
+            MoveTo(bx, shell_top + 1 + i as u16),
             Print(clean),
             Clear(ClearType::UntilNewLine)
         )?;
@@ -1165,6 +1372,7 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         Mode::Visual => "VISUAL",
         Mode::Shell => "SHELL ",
         Mode::Ai => "AI    ",
+        Mode::Browser => "BROWSE",
     };
 
     let dirty = if app.dirty { " [+]" } else { "" };
@@ -1197,10 +1405,13 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         )?;
     } else if app.mode == Mode::Ai {
         // el cursor de la IA ya se dibujó en draw_ai_pane
+    } else if app.mode == Mode::Browser {
+        // el cursor del navegador ya se dibujó en draw_browser
     } else if app.mode != Mode::Shell {
         // cursor bloque estilo vim: el carácter bajo el cursor en vídeo inverso
         let y = app.screen_row_of(app.row).min(editor_rows.saturating_sub(1) as usize) as u16;
-        let x = (6 + app.col.saturating_sub(app.left)).min(w.saturating_sub(1) as usize) as u16;
+        let x = (bx as usize + 6 + app.col.saturating_sub(app.left))
+            .min(w.saturating_sub(1) as usize) as u16;
         let ch = app
             .lines
             .get(app.row)
@@ -1217,17 +1428,103 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         )?;
     } else {
         // en el shell se muestra el cursor real en la línea de entrada
-        queue!(out, Show, MoveTo(0, shell_top + shell_rows.saturating_sub(1)))?;
+        queue!(out, Show, MoveTo(bx, shell_top + shell_rows.saturating_sub(1)))?;
     }
 
     out.flush()?;
     Ok(())
 }
 
-fn draw_editor_lines(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdout) -> Result<()> {
+fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<()> {
+    // cabecera con el directorio actual
+    let dirname = app
+        .browser
+        .cwd
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| app.browser.cwd.display().to_string());
+    let title: String = format!("┌ {} ", dirname)
+        .chars()
+        .take(bx.saturating_sub(1) as usize)
+        .collect();
+    queue!(
+        out,
+        MoveTo(0, 0),
+        SetAttribute(Attribute::Reverse),
+        Print(title),
+        SetAttribute(Attribute::Reset)
+    )?;
+
+    let rows = h.saturating_sub(2) as usize; // filas 1..h-2
+    let start = app.browser.scroll.min(app.browser.entries.len());
+    let end = (start + rows).min(app.browser.entries.len());
+    let name_w = bx.saturating_sub(3) as usize;
+
+    for (i, e) in app.browser.entries[start..end].iter().enumerate() {
+        let y = 1 + i as u16;
+        let sel = start + i == app.browser.cursor;
+        let name = e
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let icon = if e.is_dir() { "▸" } else { "·" };
+        let text: String = format!(" {} {}", icon, name);
+        // truncar seguro a caracteres
+        let text: String = text.chars().take(name_w).collect();
+        if sel {
+            queue!(
+                out,
+                MoveTo(0, y),
+                Clear(ClearType::UntilNewLine),
+                SetAttribute(Attribute::Reverse),
+                Print(text),
+                SetAttribute(Attribute::Reset)
+            )?;
+        } else {
+            queue!(
+                out,
+                MoveTo(0, y),
+                Clear(ClearType::UntilNewLine),
+                if e.is_dir() {
+                    SetForegroundColor(Color::DarkYellow)
+                } else {
+                    SetForegroundColor(Color::DarkGrey)
+                },
+                Print(text),
+                SetAttribute(Attribute::Reset)
+            )?;
+        }
+        // separador vertical
+        queue!(out, MoveTo(bx - 1, y), Print("│"))?;
+    }
+
+    // rellenar el resto de filas con el separador
+    for y in (1 + (end - start) as u16)..h.saturating_sub(1) {
+        queue!(out, MoveTo(bx - 1, y), Print("│"))?;
+    }
+
+    // si el cursor se sale de la ventana, ajustar scroll (se hace en cada frame)
+    if app.browser.cursor < app.browser.scroll {
+        app.browser.scroll = app.browser.cursor;
+    }
+    if app.browser.cursor >= app.browser.scroll + rows {
+        app.browser.scroll = app.browser.cursor + 1 - rows;
+    }
+
+    Ok(())
+}
+
+fn draw_editor_lines(
+    app: &mut App,
+    editor_rows: u16,
+    bx: u16,
+    area_w: u16,
+    out: &mut io::Stdout,
+) -> Result<()> {
     let mut real = app.top;
     let mut screen_y = 0u16;
-    let max_content = w.saturating_sub(6) as usize;
+    let max_content = area_w.saturating_sub(6) as usize;
+    let mut in_src = false;
 
     while screen_y < editor_rows && real < app.lines.len() {
         if app.is_hidden(real) {
@@ -1237,11 +1534,33 @@ fn draw_editor_lines(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdo
         let idx = real;
         let folded_here = app.header_level(idx).is_some() && app.folded.contains(&idx);
         let line = &app.lines[idx];
-        queue!(out, MoveTo(0, screen_y), Print(format!("{:>5} ", idx + 1)))?;
+
+        // estado de bloque src (recorrido en orden)
+        if !in_src && line.starts_with("#+BEGIN_SRC") {
+            in_src = true;
+        } else if in_src && line.starts_with("#+END_SRC") {
+            in_src = false;
+        }
+
+        let (fg, bold) = if let Some((c, b)) = org_line_style(app, idx) {
+            (Some(c), b)
+        } else if in_src {
+            (Some(Color::DarkGrey), false)
+        } else {
+            (None, false)
+        };
+
+        queue!(out, MoveTo(bx, screen_y), Print(format!("{:>5} ", idx + 1)))?;
+        if let Some(c) = fg {
+            queue!(out, SetForegroundColor(c))?;
+            if bold {
+                queue!(out, SetAttribute(Attribute::Bold))?;
+            }
+        }
 
         let mut printed = 0usize;
         for (x, ch) in line.chars().skip(app.left).enumerate() {
-            if x + 6 >= w as usize {
+            if x + 6 >= area_w as usize {
                 break;
             }
             printed += 1;
@@ -1269,7 +1588,17 @@ fn draw_editor_lines(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdo
             queue!(out, Print(ch))?;
             if selected || hit {
                 queue!(out, SetAttribute(Attribute::Reset))?;
+                // restaurar el color de la línea tras el resaltado
+                if let Some(c) = fg {
+                    queue!(out, SetForegroundColor(c))?;
+                    if bold {
+                        queue!(out, SetAttribute(Attribute::Bold))?;
+                    }
+                }
             }
+        }
+        if fg.is_some() {
+            queue!(out, SetAttribute(Attribute::Reset))?;
         }
 
         if folded_here {
@@ -1277,7 +1606,7 @@ fn draw_editor_lines(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdo
             if printed + 2 < max_content {
                 queue!(
                     out,
-                    MoveTo((6 + printed) as u16, screen_y),
+                    MoveTo(bx + 6 + printed as u16, screen_y),
                     SetForegroundColor(Color::DarkYellow),
                     Print(" [+]"),
                     SetAttribute(Attribute::Reset)
@@ -1292,7 +1621,13 @@ fn draw_editor_lines(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdo
     Ok(())
 }
 
-fn draw_ai_pane(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdout) -> Result<()> {
+fn draw_ai_pane(
+    app: &mut App,
+    editor_rows: u16,
+    bx: u16,
+    area_w: u16,
+    out: &mut io::Stdout,
+) -> Result<()> {
     let title = if app.ai_running {
         " IA · opencode · procesando…"
     } else {
@@ -1300,10 +1635,10 @@ fn draw_ai_pane(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdout) -
     };
     queue!(
         out,
-        MoveTo(0, 0),
+        MoveTo(bx, 0),
         Clear(ClearType::UntilNewLine),
         SetAttribute(Attribute::Reverse),
-        Print(title.chars().take(w as usize).collect::<String>()),
+        Print(title.chars().take(area_w as usize).collect::<String>()),
         SetAttribute(Attribute::Reset)
     )?;
 
@@ -1320,10 +1655,10 @@ fn draw_ai_pane(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdout) -
     let max_lines = editor_rows.saturating_sub(3) as usize;
     let start = all.len().saturating_sub(max_lines);
     for (i, l) in all[start..].iter().enumerate() {
-        let clean: String = strip_ansi(l).chars().take(w as usize).collect();
+        let clean: String = strip_ansi(l).chars().take(area_w as usize).collect();
         queue!(
             out,
-            MoveTo(0, 1 + i as u16),
+            MoveTo(bx, 1 + i as u16),
             Clear(ClearType::UntilNewLine),
             Print(clean)
         )?;
@@ -1332,15 +1667,15 @@ fn draw_ai_pane(app: &mut App, editor_rows: u16, w: u16, out: &mut io::Stdout) -
     let input_row = editor_rows.saturating_sub(1);
     let input_text: String = format!("> {}", app.ai_input)
         .chars()
-        .take(w.saturating_sub(1) as usize)
+        .take(area_w.saturating_sub(1) as usize)
         .collect();
     queue!(
         out,
-        MoveTo(0, input_row),
+        MoveTo(bx, input_row),
         Clear(ClearType::UntilNewLine),
         Print(input_text)
     )?;
-    let x = ((2 + app.ai_input.chars().count()) as u16).min(w.saturating_sub(1));
+    let x = (bx + (2 + app.ai_input.chars().count()) as u16).min(area_w.saturating_sub(1));
     queue!(out, Show, MoveTo(x, input_row))?;
     Ok(())
 }

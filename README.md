@@ -48,3 +48,18 @@ cargo build --release
 - `Ctrl+K` limpiar buffer del shell
 
 Cursor bloque estilo vim. La barra de estado muestra el modo activo.
+
+## Navegador de ficheros (v_03)
+
+Columna fija a la izquierda tipo treemacs:
+- `Ctrl+B` — mostrar/foco · otra `Ctrl+B` oculta · `Esc` foco al editor (árbol sigue visible)
+- `j`/`k` — bajar/subir · `l` — entrar en carpeta · `h` — carpeta anterior
+- `Enter` — abrir fichero en el editor · `g`/`G` — principio/fin
+- los directorios se muestran en amarillo y los ficheros en gris
+
+## Colores org (v_03)
+
+- cabeceras: nivel 1 cyan (negrita), 2 verde, 3 amarillo, más magenta
+- `TODO` rojo · `DONE` verde
+- bloques `#+BEGIN_SRC`/`#+END_SRC` magenta, contenido gris
+- metadatos `#+...` amarillo
