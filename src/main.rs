@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -158,6 +158,11 @@ struct App {
     work_dir: PathBuf,
     redraw: bool, // si es false, se salta el redibujado (anti-parpadeo)
     prev: Frame, // último frame pintado (para el diff por celdas)
+    editor_rows: u16, // altura actual del panel de edición (scroll al 75%)
+    read_only: bool, // fichero sin permisos de escritura: Ctrl+S pedirá sudo
+    sudo_prompt: bool, // pidiendo contraseña sudo
+    sudo_pass: String, // contraseña (se limpia tras usarla)
+    sudo_text: String, // contenido a escribir vía sudo
 }
 
 impl App {
@@ -211,7 +216,7 @@ impl App {
         }
         let nc = (self.col as isize + dc).max(0) as usize;
         self.col = nc.min(self.line_len().saturating_sub(1).max(0));
-        self.ensure_visible(10);
+        self.ensure_visible();
     }
 
     fn ensure_hscroll(&mut self, width: usize) {
@@ -227,7 +232,12 @@ impl App {
         }
     }
 
-    fn ensure_visible(&mut self, visible: usize) {
+    fn ensure_visible(&mut self) {
+        // margen de scroll: el cursor llega hasta el 75% de la altura del editor
+        let visible = (self.editor_rows as usize) * 3 / 4;
+        if visible == 0 {
+            return;
+        }
         if self.row < self.top {
             self.top = self.row;
         }
@@ -260,7 +270,7 @@ impl App {
         self.row += 1;
         self.col = 0;
         self.dirty = true;
-        self.ensure_visible(10);
+        self.ensure_visible();
     }
 
     fn backspace(&mut self) {
@@ -313,7 +323,7 @@ impl App {
             }
         }
         self.col = 0;
-        self.ensure_visible(10);
+        self.ensure_visible();
         self.dirty = true;
     }
 
@@ -322,7 +332,7 @@ impl App {
         self.shift_folds_insert(self.row + 1);
         self.row += 1;
         self.col = 0;
-        self.ensure_visible(10);
+        self.ensure_visible();
         self.dirty = true;
     }
 
@@ -330,7 +340,7 @@ impl App {
         self.lines.insert(self.row, String::new());
         self.shift_folds_insert(self.row);
         self.col = 0;
-        self.ensure_visible(10);
+        self.ensure_visible();
         self.dirty = true;
     }
 
@@ -379,23 +389,97 @@ impl App {
         self.anchor = None;
         self.mode = Mode::Normal;
         self.clamp_col();
-        self.ensure_visible(10);
+        self.ensure_visible();
         self.dirty = true;
     }
 
     fn save(&mut self) -> Result<()> {
         let text = self.lines.join("\n");
-        fs::write(&self.path, text)
-            .with_context(|| format!("no se pudo guardar {}", self.path.display()))?;
-        self.dirty = false;
-        self.status = format!("Guardado: {}", self.path.display());
+        if self.read_only {
+            self.begin_sudo_save(text);
+            return Ok(());
+        }
+        match fs::write(&self.path, &text) {
+            Ok(()) => {
+                self.dirty = false;
+                self.status = format!("Guardado: {}", self.path.display());
+            }
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                self.begin_sudo_save(text);
+            }
+            Err(e) => {
+                self.status = format!("No se pudo guardar: {}", e);
+            }
+        }
         Ok(())
     }
 
+    /// pide la contraseña sudo para escribir un fichero sin permisos
+    fn begin_sudo_save(&mut self, text: String) {
+        self.sudo_text = text;
+        self.sudo_pass.clear();
+        self.sudo_prompt = true;
+        self.status = format!(
+            "Solo lectura: introduce contraseña sudo para {}",
+            self.path.display()
+        );
+    }
+
+    /// escribe el fichero vía `sudo -S sh -c 'cat > "$1"'` con la contraseña por stdin
+    fn sudo_save_now(&mut self) {
+        let pass = self.sudo_pass.clone();
+        let text = self.sudo_text.clone();
+        let path = self.path.clone();
+        self.sudo_prompt = false;
+        self.sudo_pass.clear();
+        self.sudo_text.clear();
+
+        let mut cmd = Command::new("sudo");
+        cmd.arg("-S");
+        cmd.arg("sh").arg("-c").arg("cat > \"$1\"").arg("sh").arg(&path);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("sudo no disponible: {}", e);
+                return;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(format!("{}\n{}", pass, text).as_bytes());
+        }
+        let mut err = String::new();
+        if let Some(mut e) = child.stderr.take() {
+            let _ = e.read_to_string(&mut err);
+        }
+        let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+        if ok {
+            self.dirty = false;
+            self.status = format!("Guardado (sudo): {}", path.display());
+        } else {
+            let msg = err
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .last()
+                .unwrap_or("contraseña incorrecta")
+                .to_string();
+            self.status = format!("sudo falló: {} (Ctrl+S para reintentar)", msg);
+        }
+    }
+
     fn send_selection(&mut self) -> Result<()> {
-        let s = self.selected();
+        // sin selección activa: enviar la línea entera bajo el cursor
+        let s = if self.anchor.is_some() {
+            self.selected()
+        } else {
+            self.lines.get(self.row).cloned().unwrap_or_default()
+        };
         if s.trim().is_empty() {
-            self.status = "Selección vacía".into();
+            self.status = "Línea vacía".into();
             return Ok(());
         }
 
@@ -485,7 +569,15 @@ impl App {
         self.matches.clear();
         self.pending = None;
         self.dirty = false;
-        self.status = format!("Abierto: {}", path.display());
+        self.read_only = !file_writable(&path);
+        self.status = if self.read_only {
+            format!(
+                "Abierto (solo lectura): {} · Ctrl+S pedirá sudo",
+                path.display()
+            )
+        } else {
+            format!("Abierto: {}", path.display())
+        };
         self.mode = self.top_mode;
     }
 
@@ -836,8 +928,10 @@ fn main() -> Result<()> {
 
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
     let shell_rows = 9.min(rows.saturating_sub(5));
+    let editor_rows = rows.saturating_sub(shell_rows + 2).max(1);
     // directorio fijo para pi: la conversación vive en una sesión por lanzamiento
     let work_dir = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let read_only = !file_writable(&path);
 
     let pty = native_pty_system().openpty(PtySize {
         rows: shell_rows,
@@ -924,6 +1018,11 @@ fn main() -> Result<()> {
         work_dir,
         redraw: true,
         prev: Frame::new(cols, rows),
+        editor_rows,
+        read_only,
+        sudo_prompt: false,
+        sudo_pass: String::new(),
+        sudo_text: String::new(),
     };
 
     terminal::enable_raw_mode()?;
@@ -942,6 +1041,18 @@ fn main() -> Result<()> {
 
 fn browser_width(w: u16) -> u16 {
     (w / 4).clamp(24, 40)
+}
+
+/// ¿se puede escribir en esta ruta? (para detectar ficheros de root)
+fn file_writable(p: &std::path::Path) -> bool {
+    if p.exists() {
+        fs::OpenOptions::new().write(true).open(p).is_ok()
+    } else {
+        p.parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .map(|d| fs::OpenOptions::new().write(true).open(d).is_ok())
+            .unwrap_or(true)
+    }
 }
 
 /// reparto de filas: editor arriba, shell abajo, 2 filas fijas (ayuda + estado)
@@ -982,6 +1093,11 @@ fn run(app: &mut App) -> Result<()> {
                 continue;
             }
             if let Event::Key(k) = ev {
+                // prompt de contraseña sudo: captura todas las teclas
+                if app.sudo_prompt {
+                    handle_sudo_key(app, k);
+                    continue;
+                }
                 // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
                 if k.modifiers.contains(KeyModifiers::CONTROL)
                     && k.modifiers.contains(KeyModifiers::SHIFT)
@@ -1147,6 +1263,33 @@ fn run(app: &mut App) -> Result<()> {
     Ok(())
 }
 
+fn handle_sudo_key(app: &mut App, k: KeyEvent) {
+    match k.code {
+        KeyCode::Esc => {
+            app.sudo_prompt = false;
+            app.sudo_pass.clear();
+            app.sudo_text.clear();
+            app.status = "Guardado con sudo cancelado".into();
+        }
+        KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.sudo_prompt = false;
+            app.sudo_pass.clear();
+            app.sudo_text.clear();
+            app.status = "Guardado con sudo cancelado".into();
+        }
+        KeyCode::Enter => {
+            app.sudo_save_now();
+        }
+        KeyCode::Backspace => {
+            app.sudo_pass.pop();
+        }
+        KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.sudo_pass.push(c);
+        }
+        _ => {}
+    }
+}
+
 fn handle_browser_key(app: &mut App, k: KeyEvent) {
     match k.code {
         KeyCode::Char('j') | KeyCode::Down => app.browser.cursor_down(),
@@ -1292,22 +1435,22 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.row = app.first_visible();
                     app.col = 0;
                     app.pending = None;
-                    app.ensure_visible(10);
+                    app.ensure_visible();
                 }
                 KeyCode::Char('g') => app.pending = Some('g'),
                 KeyCode::Char('G') => {
                     app.row = app.last_visible();
                     app.col = 0;
                     app.pending = None;
-                    app.ensure_visible(10);
+                    app.ensure_visible();
                 }
                 KeyCode::Char('0') | KeyCode::Home => {
                     app.col = 0;
-                    app.ensure_visible(10);
+                    app.ensure_visible();
                 }
                 KeyCode::Char('$') | KeyCode::End => {
                     app.col = app.line_len().saturating_sub(1);
-                    app.ensure_visible(10);
+                    app.ensure_visible();
                 }
                 KeyCode::Char('z') => app.pending = Some('z'),
                 KeyCode::Char('d') if app.pending == Some('d') => {
@@ -1341,7 +1484,7 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.row = r;
                     app.col = c;
                     app.reveal_row(app.row);
-                    app.ensure_visible(10);
+                    app.ensure_visible();
                 }
                 KeyCode::Char('N') if !app.search_query.is_empty() && !app.matches.is_empty() => {
                     app.match_idx = (app.match_idx + app.matches.len() - 1) % app.matches.len();
@@ -1349,7 +1492,7 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.row = r;
                     app.col = c;
                     app.reveal_row(app.row);
-                    app.ensure_visible(10);
+                    app.ensure_visible();
                 }
                 KeyCode::Char('/') => {
                     app.searching = true;
@@ -1378,11 +1521,11 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
             KeyCode::Down => app.move_cursor(1, 0),
             KeyCode::Home => {
                 app.col = 0;
-                app.ensure_visible(10);
+                app.ensure_visible();
             }
             KeyCode::End => {
                 app.col = app.line_len();
-                app.ensure_visible(10);
+                app.ensure_visible();
             }
             KeyCode::Enter => app.newline(),
             KeyCode::Backspace => app.backspace(),
@@ -1407,11 +1550,11 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
             KeyCode::Char('l') | KeyCode::Right => app.move_cursor(0, 1),
             KeyCode::Home => {
                 app.col = 0;
-                app.ensure_visible(10);
+                app.ensure_visible();
             }
             KeyCode::End => {
                 app.col = app.line_len().saturating_sub(1);
-                app.ensure_visible(10);
+                app.ensure_visible();
             }
             KeyCode::Char('x') | KeyCode::Delete => app.delete_selection(),
             _ => {}
@@ -1447,7 +1590,7 @@ fn handle_search_key(app: &mut App, k: KeyEvent) {
                 app.row = r;
                 app.col = c;
                 app.reveal_row(app.row);
-                app.ensure_visible(10);
+                app.ensure_visible();
             }
             app.status = format!("{} coincidencias", app.matches.len());
         }
@@ -1641,6 +1784,7 @@ fn draw(app: &mut App) -> Result<()> {
     let mut out = io::stdout();
 
     let (editor_rows, shell_rows) = layout(h, app.shell_rows);
+    app.editor_rows = editor_rows;
     let shell_top = editor_rows + 1;
     let status_y = h.saturating_sub(1);
 
@@ -1653,7 +1797,7 @@ fn draw(app: &mut App) -> Result<()> {
     if app.is_hidden(app.row) {
         app.reveal_row(app.row);
     }
-    app.ensure_visible(editor_rows.saturating_sub(1) as usize);
+    app.ensure_visible();
 
     let bx: u16 = if app.browser.active { browser_width(w) } else { 0 };
     let area_w = w.saturating_sub(bx);
@@ -1712,10 +1856,20 @@ fn draw(app: &mut App) -> Result<()> {
     let dirty = if app.dirty { " [+]".to_string() } else { String::new() };
     // truncar a ancho de pantalla: si la barra de estado desborda, el terminal
     // hace wrap, scrollea el frame una fila y el cursor queda desplazado
-    let status_text: String = format!(" {}{}  {}", mode, dirty, app.status)
-        .chars()
-        .take(w as usize)
-        .collect();
+    let status_text: String = if app.sudo_prompt {
+        format!(
+            "Contraseña sudo ({}): {}",
+            app.path.display(),
+            "*".repeat(app.sudo_pass.chars().count())
+        )
+    } else if app.searching {
+        format!("/{}", app.search_query)
+    } else {
+        format!(" {}{}  {}", mode, dirty, app.status)
+    }
+    .chars()
+    .take(w as usize)
+    .collect();
     fr.text(0, status_y, &status_text, Style::default());
 
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
@@ -1745,7 +1899,10 @@ fn draw(app: &mut App) -> Result<()> {
     );
 
     // cursor bloque del editor: celda en vídeo inverso dentro del frame
-    if !app.searching && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell) {
+    if !app.sudo_prompt
+        && !app.searching
+        && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell)
+    {
         let y = app.screen_row_of(app.row).min(editor_rows.saturating_sub(1) as usize) as u16;
         let x = (bx as usize + 6 + app.col.saturating_sub(app.left))
             .min(w.saturating_sub(1) as usize) as u16;
@@ -1775,7 +1932,7 @@ fn draw(app: &mut App) -> Result<()> {
     render_frame(&mut app.prev, &fr, &mut out)?;
 
     // cursor real del terminal según el modo
-    if app.searching {
+    if app.sudo_prompt || app.searching {
         let prompt_len = status_text.chars().count() as u16;
         queue!(out, Show, MoveTo(prompt_len, status_y))?;
     } else if app.mode == Mode::Ai {
