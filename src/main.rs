@@ -1348,7 +1348,9 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
 
     let shell = app.shell.output.lock().unwrap();
     let raw = String::from_utf8_lossy(&shell);
-    let available = shell_rows.saturating_sub(1) as usize;
+    // una fila menos: la penúltima es la barra de ayuda permanente
+    let max_rows = h.saturating_sub(4).saturating_sub(shell_top) as usize;
+    let available = (shell_rows.saturating_sub(2) as usize).min(max_rows);
     let slines: Vec<&str> = raw.lines().collect();
     let start = slines.len().saturating_sub(available);
 
@@ -1387,6 +1389,31 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         MoveTo(0, status_y),
         Clear(ClearType::CurrentLine),
         Print(status_text)
+    )?;
+
+    // barra de ayuda permanente: atajos del modo activo, siempre visibles
+    let help = match app.mode {
+        Mode::Normal | Mode::Insert | Mode::Visual => {
+            "i escribir · Esc volver · Tab/za plegar · Ctrl+B ficheros · Ctrl+A IA · Tab shell · Ctrl+E enviar · Ctrl+S guardar · Ctrl+Q salir"
+        }
+        Mode::Browser => {
+            "j/k mover · l entrar · h subir · Enter abrir · g/G extremos · Esc editor · Ctrl+B ocultar"
+        }
+        Mode::Ai => {
+            "Enter enviar · ↑/↓ historial · Esc cancelar · Ctrl+A editor · Tab shell"
+        }
+        Mode::Shell => {
+            "escribe comandos · Shift+Tab editor · Ctrl+E enviar selección · Ctrl+Q salir"
+        },
+    };
+    let help_text: String = help.chars().take(w as usize).collect();
+    queue!(
+        out,
+        MoveTo(0, status_y - 1),
+        Clear(ClearType::CurrentLine),
+        SetForegroundColor(Color::DarkGrey),
+        Print(help_text),
+        SetAttribute(Attribute::Reset)
     )?;
 
     if app.searching {
@@ -1428,7 +1455,8 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
         )?;
     } else {
         // en el shell se muestra el cursor real en la línea de entrada
-        queue!(out, Show, MoveTo(bx, shell_top + shell_rows.saturating_sub(1)))?;
+        let cy = (shell_top + shell_rows.saturating_sub(2)).min(h.saturating_sub(3));
+        queue!(out, Show, MoveTo(bx, cy))?;
     }
 
     out.flush()?;
@@ -1455,7 +1483,7 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<
         SetAttribute(Attribute::Reset)
     )?;
 
-    let rows = h.saturating_sub(2) as usize; // filas 1..h-2
+    let rows = h.saturating_sub(3) as usize; // filas 1..h-3 (deja la ayuda y el estado)
     let start = app.browser.scroll.min(app.browser.entries.len());
     let end = (start + rows).min(app.browser.entries.len());
     let name_w = bx.saturating_sub(3) as usize;
@@ -1499,7 +1527,7 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<
     }
 
     // rellenar el resto de filas con el separador
-    for y in (1 + (end - start) as u16)..h.saturating_sub(1) {
+    for y in (1 + (end - start) as u16)..h.saturating_sub(2) {
         queue!(out, MoveTo(bx - 1, y), Print("│"))?;
     }
 
