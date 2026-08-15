@@ -157,6 +157,7 @@ struct App {
     shell_rows: u16,
     work_dir: PathBuf,
     redraw: bool, // si es false, se salta el redibujado (anti-parpadeo)
+    prev: Frame, // último frame pintado (para el diff por celdas)
 }
 
 impl App {
@@ -922,6 +923,7 @@ fn main() -> Result<()> {
         shell_rows,
         work_dir,
         redraw: true,
+        prev: Frame::new(cols, rows),
     };
 
     terminal::enable_raw_mode()?;
@@ -995,6 +997,43 @@ fn run(app: &mut App) -> Result<()> {
                         app.shell.resize(app.shell_rows, c);
                         app.status = format!("Borde movido · shell {} líneas", app.shell_rows);
                         continue;
+                    }
+                }
+                // navegación entre paneles con Shift+flechas: ← tree · →/↑ editor (o IA) · ↓ shell
+                if k.modifiers.contains(KeyModifiers::SHIFT)
+                    && matches!(
+                        k.code,
+                        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                    )
+                {
+                    app.searching = false;
+                    match k.code {
+                        KeyCode::Left => {
+                            if app.mode != Mode::Browser {
+                                if app.mode != Mode::Shell {
+                                    app.top_mode = app.mode;
+                                }
+                                app.browser.active = true;
+                                app.browser.refresh();
+                                app.mode = Mode::Browser;
+                            }
+                            continue;
+                        }
+                        KeyCode::Right | KeyCode::Up => {
+                            app.mode = match app.top_mode {
+                                Mode::Browser | Mode::Shell => Mode::Normal,
+                                m => m,
+                            };
+                            continue;
+                        }
+                        KeyCode::Down => {
+                            if app.mode != Mode::Shell {
+                                app.top_mode = app.mode;
+                                app.mode = Mode::Shell;
+                            }
+                            continue;
+                        }
+                        _ => {}
                     }
                 }
                 if app.searching {
@@ -1347,7 +1386,11 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
             }
             KeyCode::Enter => app.newline(),
             KeyCode::Backspace => app.backspace(),
-            KeyCode::Tab => app.insert_char('\t'),
+            // Tab en inserción: plegar/desplegar la cabecera bajo el cursor (como en Normal)
+            KeyCode::Tab => {
+                let r = app.row;
+                app.toggle_fold(r);
+            }
             KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.insert_char(c)
             }
@@ -1492,6 +1535,107 @@ fn org_line_style(app: &App, idx: usize) -> Option<(Color, bool)> {
     None
 }
 
+// ---------- frame en memoria + diff por celdas (elimina el parpadeo) ----------
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+struct Style {
+    fg: Option<Color>,
+    bg: Option<Color>,
+    reverse: bool,
+    bold: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Cell {
+    ch: char,
+    st: Style,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Cell {
+            ch: ' ',
+            st: Style::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Frame {
+    w: u16,
+    h: u16,
+    cells: Vec<Cell>,
+}
+
+impl Frame {
+    fn new(w: u16, h: u16) -> Self {
+        Frame {
+            w,
+            h,
+            cells: vec![Cell::default(); (w as usize) * (h as usize)],
+        }
+    }
+
+    fn put(&mut self, x: u16, y: u16, ch: char, st: Style) {
+        if x >= self.w || y >= self.h {
+            return;
+        }
+        let i = y as usize * self.w as usize + x as usize;
+        self.cells[i] = Cell { ch, st };
+    }
+
+    fn text(&mut self, x: u16, y: u16, s: &str, st: Style) {
+        for (i, c) in s.chars().enumerate() {
+            self.put(x + i as u16, y, c, st);
+        }
+    }
+}
+
+/// escribe en la terminal únicamente las celdas que cambiaron respecto al frame anterior
+fn render_frame(prev: &mut Frame, cur: &Frame, out: &mut io::Stdout) -> io::Result<()> {
+    if prev.w != cur.w || prev.h != cur.h {
+        // cambio de tamaño: limpiar y repintar todo
+        *prev = Frame::new(cur.w, cur.h);
+        queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+    }
+    let w = cur.w as usize;
+    for y in 0..cur.h as usize {
+        let row = y * w;
+        let mut x = 0usize;
+        while x < w {
+            let i = row + x;
+            if prev.cells[i] == cur.cells[i] {
+                x += 1;
+                continue;
+            }
+            // tramo de celdas cambiadas: un solo MoveTo y cada celda con su estilo
+            queue!(out, MoveTo(x as u16, y as u16))?;
+            while x < w && prev.cells[row + x] != cur.cells[row + x] {
+                let c = cur.cells[row + x];
+                let st = c.st;
+                if let Some(fg) = st.fg {
+                    queue!(out, SetForegroundColor(fg))?;
+                }
+                if let Some(bg) = st.bg {
+                    queue!(out, SetBackgroundColor(bg))?;
+                }
+                if st.reverse {
+                    queue!(out, SetAttribute(Attribute::Reverse))?;
+                }
+                if st.bold {
+                    queue!(out, SetAttribute(Attribute::Bold))?;
+                }
+                queue!(out, Print(c.ch))?;
+                if st.fg.is_some() || st.bg.is_some() || st.reverse || st.bold {
+                    queue!(out, SetAttribute(Attribute::Reset))?;
+                }
+                x += 1;
+            }
+        }
+    }
+    *prev = cur.clone();
+    Ok(())
+}
+
 fn draw(app: &mut App) -> Result<()> {
     let (w, h) = terminal::size()?;
     let mut out = io::stdout();
@@ -1522,41 +1666,38 @@ fn draw(app: &mut App) -> Result<()> {
         }
     }
 
-    queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
+    // pintar el frame en memoria (sin tocar la terminal todavía)
+    let mut fr = Frame::new(w, h);
 
     if app.browser.active {
-        draw_browser(app, bx, h, &mut out)?;
+        draw_browser(app, bx, h, &mut fr);
     }
 
     if app.mode == Mode::Ai {
-        draw_ai_pane(app, editor_rows, bx, area_w, &mut out)?;
+        draw_ai_pane(app, editor_rows, bx, area_w, &mut fr);
     } else if app.mode != Mode::Browser {
-        draw_editor_lines(app, editor_rows, bx, area_w, &mut out)?;
+        draw_editor_lines(app, editor_rows, bx, area_w, &mut fr);
     }
 
     // separador del shell (solo a la derecha del navegador)
-    queue!(out, MoveTo(bx, shell_top), Print("─".repeat(area_w as usize)))?;
+    fr.text(bx, shell_top, &"─".repeat(area_w as usize), Style::default());
 
-    let shell = app.shell.output.lock().unwrap();
-    let raw = String::from_utf8_lossy(&shell);
-    // una fila menos: la penúltima es la barra de ayuda permanente
+    // salida del shell: últimas líneas (una menos: la penúltima es la ayuda)
     let max_rows = h.saturating_sub(4).saturating_sub(shell_top) as usize;
     let available = (shell_rows.saturating_sub(2) as usize).min(max_rows);
-    let slines: Vec<&str> = raw.lines().collect();
-    let start = slines.len().saturating_sub(available);
-
-    for (i, line) in slines[start..].iter().enumerate() {
-        let clean: String = strip_ansi(line)
-            .replace('\r', "")
-            .chars()
-            .take(area_w as usize)
-            .collect();
-        queue!(
-            out,
-            MoveTo(bx, shell_top + 1 + i as u16),
-            Print(clean),
-            Clear(ClearType::UntilNewLine)
-        )?;
+    let slines: Vec<String> = {
+        let shell = app.shell.output.lock().unwrap();
+        let raw = String::from_utf8_lossy(&shell);
+        let v: Vec<&str> = raw.lines().collect();
+        let start = v.len().saturating_sub(available);
+        v[start..]
+            .iter()
+            .map(|s| strip_ansi(s).replace('\r', ""))
+            .collect()
+    };
+    for (i, line) in slines.iter().enumerate() {
+        let clean: String = line.chars().take(area_w as usize).collect();
+        fr.text(bx, shell_top + 1 + i as u16, &clean, Style::default());
     }
 
     let mode = match app.mode {
@@ -1568,19 +1709,14 @@ fn draw(app: &mut App) -> Result<()> {
         Mode::Browser => "BROWSE",
     };
 
-    let dirty = if app.dirty { " [+]" } else { "" };
+    let dirty = if app.dirty { " [+]".to_string() } else { String::new() };
     // truncar a ancho de pantalla: si la barra de estado desborda, el terminal
     // hace wrap, scrollea el frame una fila y el cursor queda desplazado
     let status_text: String = format!(" {}{}  {}", mode, dirty, app.status)
         .chars()
         .take(w as usize)
         .collect();
-    queue!(
-        out,
-        MoveTo(0, status_y),
-        Clear(ClearType::CurrentLine),
-        Print(status_text)
-    )?;
+    fr.text(0, status_y, &status_text, Style::default());
 
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
     let help = match app.mode {
@@ -1598,35 +1734,18 @@ fn draw(app: &mut App) -> Result<()> {
         },
     };
     let help_text: String = help.chars().take(w as usize).collect();
-    queue!(
-        out,
-        MoveTo(0, status_y - 1),
-        Clear(ClearType::CurrentLine),
-        SetForegroundColor(Color::DarkGrey),
-        Print(help_text),
-        SetAttribute(Attribute::Reset)
-    )?;
+    fr.text(
+        0,
+        status_y - 1,
+        &help_text,
+        Style {
+            fg: Some(Color::DarkGrey),
+            ..Default::default()
+        },
+    );
 
-    if app.searching {
-        let prompt: String = format!("/{}", app.search_query)
-            .chars()
-            .take(w.saturating_sub(1) as usize)
-            .collect();
-        let prompt_len = prompt.chars().count() as u16;
-        queue!(
-            out,
-            MoveTo(0, status_y),
-            Clear(ClearType::CurrentLine),
-            Print(prompt),
-            Show,
-            MoveTo(prompt_len, status_y)
-        )?;
-    } else if app.mode == Mode::Ai {
-        // el cursor de la IA ya se dibujó en draw_ai_pane
-    } else if app.mode == Mode::Browser {
-        // el cursor del navegador ya se dibujó en draw_browser
-    } else if app.mode != Mode::Shell {
-        // cursor bloque estilo vim: el carácter bajo el cursor en vídeo inverso
+    // cursor bloque del editor: celda en vídeo inverso dentro del frame
+    if !app.searching && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell) {
         let y = app.screen_row_of(app.row).min(editor_rows.saturating_sub(1) as usize) as u16;
         let x = (bx as usize + 6 + app.col.saturating_sub(app.left))
             .min(w.saturating_sub(1) as usize) as u16;
@@ -1635,26 +1754,47 @@ fn draw(app: &mut App) -> Result<()> {
             .get(app.row)
             .and_then(|l| l.chars().nth(app.col))
             .unwrap_or(' ');
-        queue!(
-            out,
-            MoveTo(x, y),
-            Hide,
-            SetAttribute(Attribute::Reverse),
-            Print(ch),
-            SetAttribute(Attribute::Reset),
-            MoveTo(x, y)
-        )?;
-    } else {
-        // en el shell se muestra el cursor real en la línea de entrada
+        let (fg, bold) = match org_line_style(app, app.row) {
+            Some((c, b)) => (Some(c), b),
+            None => (None, false),
+        };
+        fr.put(
+            x,
+            y,
+            ch,
+            Style {
+                fg,
+                bold,
+                reverse: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    // diff con el frame anterior: solo se reescriben las celdas que cambiaron
+    render_frame(&mut app.prev, &fr, &mut out)?;
+
+    // cursor real del terminal según el modo
+    if app.searching {
+        let prompt_len = status_text.chars().count() as u16;
+        queue!(out, Show, MoveTo(prompt_len, status_y))?;
+    } else if app.mode == Mode::Ai {
+        let input_row = editor_rows.saturating_sub(1);
+        let x = (bx + (2 + app.ai_input.chars().count()) as u16).min(area_w.saturating_sub(1));
+        queue!(out, Show, MoveTo(x, input_row))?;
+    } else if app.mode == Mode::Shell {
         let cy = (shell_top + shell_rows.saturating_sub(2)).min(h.saturating_sub(3));
         queue!(out, Show, MoveTo(bx, cy))?;
+    } else {
+        // editor / navegador: el cursor se pinta en el frame; ocultar el real
+        queue!(out, Hide, MoveTo(0, 0))?;
     }
 
     out.flush()?;
     Ok(())
 }
 
-fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<()> {
+fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
     // cabecera con el directorio actual; pista de cómo enfocarlo si no lo está
     let dirname = app
         .browser
@@ -1670,13 +1810,7 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<
     .chars()
     .take(bx.saturating_sub(1) as usize)
     .collect();
-    queue!(
-        out,
-        MoveTo(0, 0),
-        SetAttribute(Attribute::Reverse),
-        Print(title),
-        SetAttribute(Attribute::Reset)
-    )?;
+    fr.text(0, 0, &title, Style { reverse: true, ..Default::default() });
 
     let rows = h.saturating_sub(3) as usize; // filas 1..h-3 (deja la ayuda y el estado)
     let start = app.browser.scroll.min(app.browser.entries.len());
@@ -1692,38 +1826,22 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<
             .unwrap_or_default();
         let icon = if e.is_dir() { "▸" } else { "·" };
         let text: String = format!(" {} {}", icon, name);
-        // truncar seguro a caracteres
         let text: String = text.chars().take(name_w).collect();
-        if sel {
-            queue!(
-                out,
-                MoveTo(0, y),
-                Clear(ClearType::UntilNewLine),
-                SetAttribute(Attribute::Reverse),
-                Print(text),
-                SetAttribute(Attribute::Reset)
-            )?;
+        let st = if sel {
+            Style { reverse: true, ..Default::default() }
+        } else if e.is_dir() {
+            Style { fg: Some(Color::DarkYellow), ..Default::default() }
         } else {
-            queue!(
-                out,
-                MoveTo(0, y),
-                Clear(ClearType::UntilNewLine),
-                if e.is_dir() {
-                    SetForegroundColor(Color::DarkYellow)
-                } else {
-                    SetForegroundColor(Color::DarkGrey)
-                },
-                Print(text),
-                SetAttribute(Attribute::Reset)
-            )?;
-        }
+            Style { fg: Some(Color::DarkGrey), ..Default::default() }
+        };
+        fr.text(0, y, &text, st);
         // separador vertical
-        queue!(out, MoveTo(bx - 1, y), Print("│"))?;
+        fr.put(bx - 1, y, '│', Style::default());
     }
 
     // rellenar el resto de filas con el separador
     for y in (1 + (end - start) as u16)..h.saturating_sub(2) {
-        queue!(out, MoveTo(bx - 1, y), Print("│"))?;
+        fr.put(bx - 1, y, '│', Style::default());
     }
 
     // si el cursor se sale de la ventana, ajustar scroll (se hace en cada frame)
@@ -1733,17 +1851,9 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<
     if app.browser.cursor >= app.browser.scroll + rows {
         app.browser.scroll = app.browser.cursor + 1 - rows;
     }
-
-    Ok(())
 }
 
-fn draw_editor_lines(
-    app: &mut App,
-    editor_rows: u16,
-    bx: u16,
-    area_w: u16,
-    out: &mut io::Stdout,
-) -> Result<()> {
+fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
     let mut real = app.top;
     let mut screen_y = 0u16;
     let max_content = area_w.saturating_sub(6) as usize;
@@ -1773,13 +1883,7 @@ fn draw_editor_lines(
             (None, false)
         };
 
-        queue!(out, MoveTo(bx, screen_y), Print(format!("{:>5} ", idx + 1)))?;
-        if let Some(c) = fg {
-            queue!(out, SetForegroundColor(c))?;
-            if bold {
-                queue!(out, SetAttribute(Attribute::Bold))?;
-            }
-        }
+        fr.text(bx, screen_y, &format!("{:>5} ", idx + 1), Style::default());
 
         let mut printed = 0usize;
         for (x, ch) in line.chars().skip(app.left).enumerate() {
@@ -1798,42 +1902,32 @@ fn draw_editor_lines(
                     .iter()
                     .any(|&(r, c)| r == idx && col_abs >= c && col_abs < c + qlen)
             };
-            if hit && !selected {
-                queue!(
-                    out,
-                    SetBackgroundColor(Color::DarkYellow),
-                    SetForegroundColor(Color::Black)
-                )?;
-            }
-            if selected {
-                queue!(out, SetAttribute(Attribute::Reverse))?;
-            }
-            queue!(out, Print(ch))?;
-            if selected || hit {
-                queue!(out, SetAttribute(Attribute::Reset))?;
-                // restaurar el color de la línea tras el resaltado
-                if let Some(c) = fg {
-                    queue!(out, SetForegroundColor(c))?;
-                    if bold {
-                        queue!(out, SetAttribute(Attribute::Bold))?;
-                    }
+            let st = if hit && !selected {
+                Style {
+                    fg: Some(Color::Black),
+                    bg: Some(Color::DarkYellow),
+                    ..Default::default()
                 }
-            }
-        }
-        if fg.is_some() {
-            queue!(out, SetAttribute(Attribute::Reset))?;
+            } else if selected {
+                Style { fg, bold, reverse: true, ..Default::default() }
+            } else {
+                Style { fg, bold, ..Default::default() }
+            };
+            fr.put(bx + 6 + x as u16, screen_y, ch, st);
         }
 
         if folded_here {
             // marcador de plegado al final del texto visible
             if printed + 2 < max_content {
-                queue!(
-                    out,
-                    MoveTo(bx + 6 + printed as u16, screen_y),
-                    SetForegroundColor(Color::DarkYellow),
-                    Print(" [+]"),
-                    SetAttribute(Attribute::Reset)
-                )?;
+                fr.text(
+                    bx + 6 + printed as u16,
+                    screen_y,
+                    " [+]",
+                    Style {
+                        fg: Some(Color::DarkYellow),
+                        ..Default::default()
+                    },
+                );
             }
             real = app.fold_end(idx) + 1;
         } else {
@@ -1841,29 +1935,20 @@ fn draw_editor_lines(
         }
         screen_y += 1;
     }
-    Ok(())
 }
 
-fn draw_ai_pane(
-    app: &mut App,
-    editor_rows: u16,
-    bx: u16,
-    area_w: u16,
-    out: &mut io::Stdout,
-) -> Result<()> {
+fn draw_ai_pane(app: &App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
     let title = if app.ai_running {
         " IA · pi · procesando…"
     } else {
         " IA · pi · escribe tu pregunta y pulsa Enter (Esc cancela)"
     };
-    queue!(
-        out,
-        MoveTo(bx, 0),
-        Clear(ClearType::UntilNewLine),
-        SetAttribute(Attribute::Reverse),
-        Print(title.chars().take(area_w as usize).collect::<String>()),
-        SetAttribute(Attribute::Reset)
-    )?;
+    fr.text(
+        bx,
+        0,
+        &title.chars().take(area_w as usize).collect::<String>(),
+        Style { reverse: true, ..Default::default() },
+    );
 
     let mut all: Vec<String> = app.ai_lines.clone();
     if app.ai_running {
@@ -1885,20 +1970,14 @@ fn draw_ai_pane(
                 let (r1, r2) = if a <= cur { (a, cur) } else { (cur, a) };
                 i >= r1 && i <= r2
             });
-        if selected {
-            queue!(out, SetAttribute(Attribute::Reverse))?;
+        let st = if selected {
+            Style { reverse: true, ..Default::default() }
         } else if app.ai_selecting && i == cur {
-            queue!(out, SetForegroundColor(Color::DarkYellow))?;
-        }
-        queue!(
-            out,
-            MoveTo(bx, 1 + i as u16),
-            Clear(ClearType::UntilNewLine),
-            Print(clean)
-        )?;
-        if selected || (app.ai_selecting && i == cur) {
-            queue!(out, SetAttribute(Attribute::Reset))?;
-        }
+            Style { fg: Some(Color::DarkYellow), ..Default::default() }
+        } else {
+            Style::default()
+        };
+        fr.text(bx, 1 + i as u16, &clean, st);
     }
 
     let input_row = editor_rows.saturating_sub(1);
@@ -1906,15 +1985,7 @@ fn draw_ai_pane(
         .chars()
         .take(area_w.saturating_sub(1) as usize)
         .collect();
-    queue!(
-        out,
-        MoveTo(bx, input_row),
-        Clear(ClearType::UntilNewLine),
-        Print(input_text)
-    )?;
-    let x = (bx + (2 + app.ai_input.chars().count()) as u16).min(area_w.saturating_sub(1));
-    queue!(out, Show, MoveTo(x, input_row))?;
-    Ok(())
+    fr.text(bx, input_row, &input_text, Style::default());
 }
 
 fn strip_ansi(s: &str) -> String {
