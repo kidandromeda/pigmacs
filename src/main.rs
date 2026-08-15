@@ -156,6 +156,7 @@ struct App {
     ai_sel_cursor: usize,
     shell_rows: u16,
     work_dir: PathBuf,
+    redraw: bool, // si es false, se salta el redibujado (anti-parpadeo)
 }
 
 impl App {
@@ -497,6 +498,12 @@ impl App {
     }
 
     fn browser_up(&mut self) {
+        // anclar rutas relativas (p.ej. ".") a su absoluta para poder subir por todo el sistema
+        if self.browser.cwd.is_relative() {
+            if let Ok(abs) = fs::canonicalize(&self.browser.cwd) {
+                self.browser.cwd = abs;
+            }
+        }
         if let Some(parent) = self.browser.cwd.parent() {
             let p = parent.to_path_buf();
             if !p.as_os_str().is_empty() {
@@ -794,6 +801,7 @@ impl App {
         self.ai_lines.push(String::new());
         self.ai_running = false;
         self.status = format!("IA: {} caracteres", out.len());
+        self.redraw = true;
     }
 
     fn ai_cancel(&mut self) {
@@ -812,6 +820,7 @@ impl App {
         self.ai_lines.push(String::new());
         self.ai_running = false;
         self.status = "IA: cancelado".into();
+        self.redraw = true;
     }
 }
 
@@ -866,7 +875,8 @@ fn main() -> Result<()> {
         .parent()
         .map(|p| p.to_path_buf())
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map(|p| fs::canonicalize(&p).unwrap_or(p))
+        .unwrap_or_else(|| work_dir.clone());
 
     let mut browser = Browser {
         active: true,
@@ -911,6 +921,7 @@ fn main() -> Result<()> {
         ai_sel_cursor: 0,
         shell_rows,
         work_dir,
+        redraw: true,
     };
 
     terminal::enable_raw_mode()?;
@@ -939,12 +950,29 @@ fn layout(h: u16, shell_rows: u16) -> (u16, u16) {
 }
 
 fn run(app: &mut App) -> Result<()> {
+    app.redraw = true;
+    let mut last_shell_len = 0usize;
+    let mut last_ai_len = 0usize;
     loop {
         app.ai_flush();
-        draw(app)?;
+        // redibujar solo si algo cambió (teclas, salida del shell, IA, resize):
+        // reescribir 50 veces/segundo es lo que hacía parpadear la pantalla
+        let shell_len = app.shell.output.lock().unwrap().len();
+        let ai_len = if app.ai_running {
+            app.ai_out.lock().unwrap().len()
+        } else {
+            0
+        };
+        if app.redraw || shell_len != last_shell_len || ai_len != last_ai_len {
+            draw(app)?;
+            last_shell_len = shell_len;
+            last_ai_len = ai_len;
+            app.redraw = false;
+        }
 
         if event::poll(Duration::from_millis(20))? {
             let ev = event::read()?;
+            app.redraw = true;
             if let Event::Resize(c, r) = ev {
                 let (_, sr) = layout(r, app.shell_rows);
                 app.shell_rows = sr;
