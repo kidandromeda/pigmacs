@@ -1,0 +1,13 @@
+#+TITLE: PigMacs
+
+* Bienvenido
+
+Este es un fichero org de ejemplo.
+
+** Subseccion
+
+Contenido plegable.
+
+* IA
+
+Pulsa Ctrl+A para hablar con opencode.

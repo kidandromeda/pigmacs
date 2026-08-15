@@ -62,6 +62,8 @@ struct App {
     // ia
     ai_lines: Vec<String>,
     ai_input: String,
+    ai_history: Vec<String>,
+    ai_hist_idx: usize,
     ai_running: bool,
     ai_out: Arc<Mutex<String>>,
     ai_flag: Arc<AtomicBool>,
@@ -510,6 +512,8 @@ impl App {
         }
         self.ai_lines.push(format!(">>> {}", prompt));
         self.ai_lines.push(String::new());
+        self.ai_history.push(prompt.clone());
+        self.ai_hist_idx = self.ai_history.len();
         self.ai_input.clear();
         self.ai_running = true;
         self.ai_flag.store(true, Ordering::SeqCst);
@@ -526,7 +530,13 @@ impl App {
 
         thread::spawn(move || {
             let mut cmd = Command::new("opencode");
-            cmd.arg("run").arg("--pure").arg(&prompt);
+            cmd.arg("run");
+            if let Ok(m) = env::var("PIGMACS_AI_MODEL") {
+                if !m.trim().is_empty() {
+                    cmd.arg("--model").arg(m.trim());
+                }
+            }
+            cmd.arg("--pure").arg(&prompt);
             cmd.current_dir(dir);
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
@@ -671,6 +681,8 @@ fn main() -> Result<()> {
         folded: HashSet::new(),
         ai_lines: Vec::new(),
         ai_input: String::new(),
+        ai_history: Vec::new(),
+        ai_hist_idx: 0,
         ai_running: false,
         ai_out: Arc::new(Mutex::new(String::new())),
         ai_flag: Arc::new(AtomicBool::new(false)),
@@ -787,6 +799,29 @@ fn handle_ai_key(app: &mut App, k: KeyEvent) {
         }
         KeyCode::Backspace => {
             app.ai_input.pop();
+        }
+        KeyCode::Up => {
+            if app.ai_hist_idx > 0 {
+                app.ai_hist_idx -= 1;
+                app.ai_input = app
+                    .ai_history
+                    .get(app.ai_hist_idx)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+        }
+        KeyCode::Down => {
+            if app.ai_hist_idx + 1 < app.ai_history.len() {
+                app.ai_hist_idx += 1;
+                app.ai_input = app
+                    .ai_history
+                    .get(app.ai_hist_idx)
+                    .cloned()
+                    .unwrap_or_default();
+            } else {
+                app.ai_hist_idx = app.ai_history.len();
+                app.ai_input.clear();
+            }
         }
         KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
             app.ai_input.push(c);
