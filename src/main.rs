@@ -1464,17 +1464,21 @@ fn draw(app: &mut App, editor_rows: u16, shell_rows: u16) -> Result<()> {
 }
 
 fn draw_browser(app: &mut App, bx: u16, h: u16, out: &mut io::Stdout) -> Result<()> {
-    // cabecera con el directorio actual
+    // cabecera con el directorio actual; pista de cómo enfocarlo si no lo está
     let dirname = app
         .browser
         .cwd
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| app.browser.cwd.display().to_string());
-    let title: String = format!("┌ {} ", dirname)
-        .chars()
-        .take(bx.saturating_sub(1) as usize)
-        .collect();
+    let title: String = if app.mode == Mode::Browser {
+        format!("┌ {} ", dirname)
+    } else {
+        format!("┌ {} · Ctrl+B ", dirname)
+    }
+    .chars()
+    .take(bx.saturating_sub(1) as usize)
+    .collect();
     queue!(
         out,
         MoveTo(0, 0),

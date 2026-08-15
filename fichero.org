@@ -7,7 +7,7 @@ Este es un fichero org de ejemplo.
 ** Subseccion
 
 Contenido plegable.
-
+ls
 * IA
 
 Pulsa Ctrl+A para hablar con opencode.
