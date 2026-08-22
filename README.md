@@ -5,10 +5,24 @@ panel de **inteligencia artificial** (opencode). Fase 1 y 2 completadas.
 
 > **⚠️ Aviso:** Este proyecto ha sido creado íntegramente mediante *vibecoding* (programación asistida por IA). El código ha sido generado, depurado y iterado por modelos de lenguaje, no escrito manualmente por un humano.
 
-## Compilar
+## Instalación
+
+**Requisitos:** Linux x86-64
 
 ```bash
+curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v1.0.1/pigmacs -o pigmacs && chmod +x pigmacs
+./pigmacs
+```
+
+## Compilar desde el código fuente
+
+**Requisitos:** Rust (rustup)
+
+```bash
+git clone https://github.com/kidandromeda/pigmacs.git
+cd pigmacs
 cargo build --release
+./target/release/pigmacs
 ```
 
 ## Uso
