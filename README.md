@@ -3,6 +3,8 @@
 Editor multimodal estilo vim para ficheros **org** con shell PTY integrado y
 panel de **inteligencia artificial** (opencode). Fase 1 y 2 completadas.
 
+> **⚠️ Aviso:** Este proyecto ha sido creado íntegramente mediante *vibecoding* (programación asistida por IA). El código ha sido generado, depurado y iterado por modelos de lenguaje, no escrito manualmente por un humano.
+
 ## Compilar
 
 ```bash
