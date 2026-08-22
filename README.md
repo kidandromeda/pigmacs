@@ -49,7 +49,7 @@ cargo build --release
 
 Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 
-## Navegador de ficheros (v_03)
+## Navegador de ficheros (v1.0.1)
 
 Columna fija a la izquierda tipo treemacs:
 - `Ctrl+B` — mostrar/foco · otra `Ctrl+B` oculta · `Esc` foco al editor (árbol sigue visible)
@@ -57,7 +57,7 @@ Columna fija a la izquierda tipo treemacs:
 - `Enter` — abrir fichero en el editor · `g`/`G` — principio/fin
 - los directorios se muestran en amarillo y los ficheros en gris
 
-## Colores org (v_03)
+## Colores org (v1.0.1)
 
 - cabeceras: nivel 1 cyan (negrita), 2 verde, 3 amarillo, más magenta
 - `TODO` rojo · `DONE` verde
