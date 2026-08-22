@@ -1,2 +1,23 @@
 /target
 /builds
+
+# Cargo.lock se incluye en proyectos binarios
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
