@@ -3,7 +3,8 @@
 Editor multimodal estilo vim para ficheros **org** con shell PTY integrado y
 panel de **inteligencia artificial** (opencode). Fase 1 y 2 completadas.
 
-> **⚠️ Aviso:** Este proyecto ha sido creado íntegramente mediante *vibecoding* (programación asistida por IA). El código ha sido generado, depurado y iterado por modelos de lenguaje, no escrito manualmente por un humano.
+ **Nota del autor:** Aviso de que este proyecto ha sido creado en su mayor parte mediante *vibecoding* (programación asistida por IA). La calidad del código puede no ser óptima. Mientras que los programas sean pequeños e independientes, no lo considero mala práctica.
+ Este programa es fruto de una necesidad personal. Trataré de pasarme por el repositorio cada cierto tiempo. Sientánse libres de usarlo o forkearlo o lo que quieran.
 
 ## Instalación
 
@@ -16,8 +17,7 @@ curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v1.0.1/pigmac
 
 ## Compilar desde el código fuente
 
-**Requisitos:** Rust (rustup)
-
+**Requisitos:** Rust
 ```bash
 git clone https://github.com/kidandromeda/pigmacs.git
 cd pigmacs
@@ -50,25 +50,53 @@ cargo build --release
 **Insert** — escribir: teclear inserta, `Enter` nueva línea, `Esc` vuelve a Normal.
 
 **Shell** — terminal PTY real:
-- `Tab`/`Shift+Tab` — alternar editor/shell
+- `Shift+Tab` / `Ctrl+T` — alternar terminal/editor (`Tab` es autocompletar)
 - `Ctrl+E` o `Ctrl+Enter` — enviar la selección visual al shell
+- dentro del shell se respetan las teclas del programa de dentro:
+  `Ctrl+B` (prefijo de tmux), `Ctrl+A`/`Ctrl+E`/`Ctrl+K`/`Ctrl+R` (readline/emacs),
+  `Ctrl+C`, `Ctrl+D`, `Ctrl+L`, `Ctrl+U`, `Ctrl+W`… — solo `Ctrl+Q`, `Ctrl+S`
+  y `Shift+Tab` siguen siendo de pigmacs
 
 **IA** (fase 3):
-- `Ctrl+A` — alternar editor/panel IA
+- `Ctrl+A` / `Alt+A` — alternar editor/panel IA (en el shell: `Shift+Tab` antes)
 - escribe la pregunta y pulsa `Enter` · `Esc` cancela la consulta en curso
 - usa `opencode run` (debe estar en el PATH)
 
-## Atajos globales
+## Atajos globales (dos grupos)
 
-- `Ctrl+S` guardar · `Ctrl+Q` salir (avisa si hay cambios sin guardar)
-- `Ctrl+K` limpiar buffer del shell
+Cada acción tiene dos atajos: uno **garantizado en tty** (`Ctrl+letra`, bytes de
+control ASCII que llegan siempre en una consola de texto) y otro para
+**terminales gráficas** (`Alt+letra`, ESC+letra). Misma letra = misma acción.
+
+| Acción | grupo TTY | grupo GUI |
+|---|---|---|
+| salir | `Ctrl+Q` | `Alt+Q` |
+| guardar | `Ctrl+S` | `Alt+S` |
+| panel IA | `Ctrl+A` | `Alt+A` |
+| tree de ficheros | `Ctrl+F` | `Alt+F` |
+| ir al terminal | `Ctrl+T` | `Alt+T` |
+| volver al editor | `Ctrl+V` | `Alt+V` |
+| enviar selección al shell | `Ctrl+E` | `Ctrl+Enter` |
+| rehacer | `Ctrl+R` | `Alt+R` |
+| limpiar la terminal | `Ctrl+K` | `Alt+K` |
+| nueva conversación IA | `Ctrl+N` | `Alt+N` |
+| subir/bajar el borde | `Ctrl+U`/`Ctrl+D` | `Ctrl+Shift+↑/↓` |
+| ayuda | `?` | `F1` |
+
+Navegación de paneles (grupo GUI): `Shift+←` tree · `Shift+→`/`↑` editor ·
+`Shift+↓` terminal · `Shift+Tab` alterna con el terminal.
+
+**Reservadas para el programa de dentro:** `Ctrl+B` se ha liberado porque es el
+prefijo de tmux; en modo SHELL también pasan al programa `Ctrl+A`, `Ctrl+E`,
+`Ctrl+K` y `Ctrl+R` (lectura de línea de comandos emacs), de modo que tmux y
+readline funcionan dentro de la terminal de pigmacs.
 
 Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 
 ## Navegador de ficheros (v1.0.1)
 
 Columna fija a la izquierda tipo treemacs:
-- `Ctrl+B` — mostrar/foco · otra `Ctrl+B` oculta · `Esc` foco al editor (árbol sigue visible)
+- `Ctrl+F` / `Alt+F` — mostrar/foco · otra vez oculta · `Esc` foco al editor (árbol sigue visible)
 - `j`/`k` — bajar/subir · `l` — entrar en carpeta · `h` — carpeta anterior
 - `Enter` — abrir fichero en el editor · `g`/`G` — principio/fin
 - los directorios se muestran en amarillo y los ficheros en gris

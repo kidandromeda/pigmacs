@@ -1075,7 +1075,7 @@ fn main() -> Result<()> {
         top_mode: Mode::Normal,
         dirty: false,
         shell,
-        status: "Ctrl+B tree · i escribir · Tab plegar · Ctrl+A IA · Ctrl+E enviar · Ctrl+Shift+↑↓ borde · Ctrl+Q salir".into(),
+        status: "Ctrl+F tree · Ctrl+T terminal · i escribir · Ctrl+A IA · Ctrl+E enviar · F1 ayuda · Ctrl+Q salir".into(),
         pending: None,
         search_query: String::new(),
         searching: false,
@@ -1201,20 +1201,20 @@ fn run(app: &mut App) -> Result<()> {
                     continue;
                 }
                 // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
+                // (grupo gui; el grupo tty hace lo mismo con Ctrl+U / Ctrl+D)
                 if k.modifiers.contains(KeyModifiers::CONTROL)
                     && k.modifiers.contains(KeyModifiers::SHIFT)
                 {
                     match k.code {
-                        KeyCode::Up => app.shell_rows = app.shell_rows.saturating_sub(1),
-                        KeyCode::Down => app.shell_rows = app.shell_rows.saturating_add(1),
+                        KeyCode::Up => {
+                            resize_border(app, 1)?;
+                            continue;
+                        }
+                        KeyCode::Down => {
+                            resize_border(app, -1)?;
+                            continue;
+                        }
                         _ => {}
-                    }
-                    if matches!(k.code, KeyCode::Up | KeyCode::Down) {
-                        let (c, r) = terminal::size()?;
-                        app.shell_rows = app.shell_rows.clamp(3, r.saturating_sub(5).max(3));
-                        app.shell.resize(app.shell_rows, c);
-                        app.status = format!("Borde movido · shell {} líneas", app.shell_rows);
-                        continue;
                     }
                 }
                 // navegación entre paneles con Shift+flechas: ← tree · →/↑ editor (o IA) · ↓ shell
@@ -1258,96 +1258,53 @@ fn run(app: &mut App) -> Result<()> {
                     handle_search_key(app, k);
                     continue;
                 }
+                // ——— atajos globales: dos grupos ———
+                // grupo tty: Ctrl+<letra> · grupo gui: Alt+<letra> (misma letra, misma acción)
+                if let Some(sc) = shortcut_of(k) {
+                    if let Some(quit) = shortcut(app, sc)? {
+                        if quit {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+                // cualquier Alt+letra sin asignar se ignora: no debe escribirse en el editor
+                if k.modifiers.contains(KeyModifiers::ALT)
+                    && !k.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(k.code, KeyCode::Char(_))
+                {
+                    continue;
+                }
+                // F1: ayuda (ambos grupos; en el shell se queda para el programa de dentro)
+                if k.code == KeyCode::F(1) && app.mode != Mode::Shell {
+                    app.help_open = true;
+                    app.help_scroll = 0;
+                    continue;
+                }
                 // Ctrl+Tab lo traga la terminal; Shift+Tab (CSI Z, KeyCode::BackTab) llega siempre
                 let is_backtab = k.code == KeyCode::BackTab;
                 let toggle_tab = (k.code == KeyCode::Tab
                     && (k.modifiers.contains(KeyModifiers::CONTROL)
                         || k.modifiers.contains(KeyModifiers::SHIFT)))
                     || is_backtab;
-                if k.modifiers.contains(KeyModifiers::CONTROL) || toggle_tab {
-                    match k.code {
-                        KeyCode::Char('q') => {
-                            if app.dirty {
-                                app.status = "Cambios sin guardar: Ctrl+S para guardar".into();
-                                continue;
-                            }
-                            break;
-                        }
-                        KeyCode::Char('s') => {
-                            app.save()?;
-                            continue;
-                        }
-                        KeyCode::Char('a') => {
-                            // alternar editor <-> IA
+                if toggle_tab {
+                    app.mode = match app.mode {
+                        Mode::Shell => app.top_mode,
+                        _ => {
                             if app.mode != Mode::Shell {
                                 app.top_mode = app.mode;
                             }
-                            app.mode = match app.mode {
-                                Mode::Ai => Mode::Normal,
-                                _ => Mode::Ai,
-                            };
-                            continue;
+                            Mode::Shell
                         }
-                        KeyCode::Char('b') => {
-                            // alternar navegador de ficheros:
-                            // 1ª pulsación: visible + foco · 2ª: ocultar · Esc: foco al editor (sigue visible)
-                            if app.mode == Mode::Browser {
-                                app.browser.active = false;
-                                app.mode = app.top_mode;
-                            } else {
-                                if app.mode != Mode::Shell {
-                                    app.top_mode = app.mode;
-                                }
-                                app.browser.active = true;
-                                app.browser.refresh();
-                                app.mode = Mode::Browser;
-                            }
-                            continue;
-                        }
-                        KeyCode::Enter if matches!(app.mode, Mode::Normal | Mode::Visual) => {
-                            app.send_selection()?;
-                            continue;
-                        }
-                        // Ctrl+Enter es indistinguible de Enter en la mayoría de terminales;
-                        // Ctrl+E (0x05) es fiable. En modo Shell pasa al shell (readline).
-                        KeyCode::Char('e') if matches!(app.mode, Mode::Normal | Mode::Visual) => {
-                            app.send_selection()?;
-                            continue;
-                        }
-                        KeyCode::Char('e') if app.mode == Mode::Ai => {
-                            app.send_ai_selection()?;
-                            continue;
-                        }
-                        KeyCode::Char('r')
-                            if matches!(app.mode, Mode::Normal | Mode::Insert | Mode::Visual) =>
-                        {
-                            app.redo_edit();
-                            continue;
-                        }
-                        KeyCode::Char('n') if app.mode == Mode::Ai => {
-                            app.ai_session_n += 1;
-                            app.ai_lines.clear();
-                            app.ai_input.clear();
-                            app.ai_selecting = false;
-                            app.ai_sel_anchor = None;
-                            app.status = "Nueva conversación IA (nueva sesión pi)".into();
-                            continue;
-                        }
-                        KeyCode::Tab | KeyCode::BackTab => {
-                            app.mode = match app.mode {
-                                Mode::Shell => app.top_mode,
-                                _ => {
-                                    app.top_mode = app.mode;
-                                    Mode::Shell
-                                }
-                            };
-                            continue;
-                        }
-                        KeyCode::Char('k') if app.mode != Mode::Shell => {
-                            app.shell.output.lock().unwrap().clear();
-                            continue;
-                        }
-                        _ => {}
+                    };
+                    continue;
+                }
+                // Ctrl+Enter: envía la selección (en la mayoría de terminales es indistinguible
+                // de Enter; Ctrl+E es el atajos fiable de los dos grupos)
+                if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Enter {
+                    if matches!(app.mode, Mode::Normal | Mode::Visual) {
+                        app.send_selection()?;
+                        continue;
                     }
                 }
 
@@ -1371,16 +1328,227 @@ fn run(app: &mut App) -> Result<()> {
     Ok(())
 }
 
+// ————— atajos de teclado —————
+// Cada acción del programa tiene DOS atajos:
+//   grupo tty: Ctrl+<letra>  — llegan siempre: son bytes de control ASCII,
+//                              garantizados incluso en una consola de texto
+//   grupo gui: Alt+<letra>   — para terminales dentro de entornos gráficos
+//                              (ESC+letra; en el shell ceden el paso al readline)
+// Reservadas para el programa de dentro (tmux, readline…): Ctrl+B es el prefijo
+// de tmux y Ctrl+A/E/K/R/C/D/L/U/W/Y… son de readline: en modo SHELL no se
+// interceptan ninguno de los dos grupos (solo Ctrl+Q, Ctrl+S y Shift+Tab).
+enum Shortcut {
+    Quit,
+    Save,
+    Ai,
+    Tree,
+    Terminal,
+    Editor,
+    Send,
+    Redo,
+    ClearShell,
+    NewAi,
+    BorderUp,
+    BorderDown,
+}
+
+/// resuelve un atajo de cualquiera de los dos grupos (Ctrl+letra o Alt+letra)
+fn shortcut_of(k: KeyEvent) -> Option<Shortcut> {
+    let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = k.modifiers.contains(KeyModifiers::ALT);
+    if ctrl == alt {
+        // ni teclas normales ni combinaciones Ctrl+Alt (AltGr)
+        return None;
+    }
+    let KeyCode::Char(c) = k.code else { return None };
+    Some(match c.to_ascii_lowercase() {
+        'q' => Shortcut::Quit,
+        's' => Shortcut::Save,
+        'a' => Shortcut::Ai,
+        'f' => Shortcut::Tree,
+        't' => Shortcut::Terminal,
+        'v' => Shortcut::Editor,
+        'e' => Shortcut::Send,
+        'r' => Shortcut::Redo,
+        'k' => Shortcut::ClearShell,
+        'n' => Shortcut::NewAi,
+        'u' => Shortcut::BorderUp,
+        'd' => Shortcut::BorderDown,
+        _ => return None,
+    })
+}
+
+/// aplica un atajo. `Ok(None)` = no aplica aquí y el evento sigue su camino
+/// (p. ej. en modo SHELL la tecla va al programa de dentro);
+/// `Ok(Some(false))` = gestionada · `Ok(Some(true))` = salir del programa
+fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
+    let in_shell = app.mode == Mode::Shell;
+    match s {
+        Shortcut::Quit => {
+            if app.dirty {
+                app.status = "Cambios sin guardar: Ctrl+S para guardar".into();
+            }
+            return Ok(Some(true));
+        }
+        Shortcut::Save => app.save()?,
+        // en el panel shell ceden el paso al programa de dentro (readline, tmux…)
+        Shortcut::Ai if in_shell => return Ok(None),
+        Shortcut::Ai => {
+            app.top_mode = app.mode;
+            app.mode = if app.mode == Mode::Ai { Mode::Normal } else { Mode::Ai };
+        }
+        Shortcut::Tree if in_shell => return Ok(None),
+        Shortcut::Tree => {
+            // 1ª pulsación: visible + foco · 2ª: ocultar · Esc: foco al editor
+            if app.mode == Mode::Browser {
+                app.browser.active = false;
+                app.mode = app.top_mode;
+            } else {
+                if app.mode != Mode::Shell {
+                    app.top_mode = app.mode;
+                }
+                app.browser.active = true;
+                app.browser.refresh();
+                app.mode = Mode::Browser;
+            }
+        }
+        Shortcut::Terminal if in_shell => return Ok(None),
+        Shortcut::Terminal => {
+            app.top_mode = app.mode;
+            app.mode = Mode::Shell;
+        }
+        Shortcut::Editor if in_shell => return Ok(None),
+        Shortcut::Editor => {
+            app.mode = match app.top_mode {
+                Mode::Browser | Mode::Shell => Mode::Normal,
+                m => m,
+            };
+        }
+        Shortcut::Send => match app.mode {
+            Mode::Normal | Mode::Visual => app.send_selection()?,
+            Mode::Ai => app.send_ai_selection()?,
+            _ => return Ok(None),
+        },
+        Shortcut::Redo => match app.mode {
+            Mode::Normal | Mode::Insert | Mode::Visual => app.redo_edit(),
+            _ => return Ok(None),
+        },
+        Shortcut::ClearShell if in_shell => return Ok(None),
+        Shortcut::ClearShell => {
+            app.shell.output.lock().unwrap().clear();
+            app.status = "Terminal limpiada".into();
+        }
+        Shortcut::NewAi => {
+            if app.mode != Mode::Ai {
+                return Ok(None);
+            }
+            app.ai_session_n += 1;
+            app.ai_lines.clear();
+            app.ai_input.clear();
+            app.ai_selecting = false;
+            app.ai_sel_anchor = None;
+            app.status = "Nueva conversación IA (nueva sesión)".into();
+        }
+        Shortcut::BorderUp if in_shell => return Ok(None),
+        Shortcut::BorderUp => resize_border(app, 1)?,
+        Shortcut::BorderDown if in_shell => return Ok(None),
+        Shortcut::BorderDown => resize_border(app, -1)?,
+    }
+    Ok(Some(false))
+}
+
+/// mueve el borde editor/terminal (positivo = más terminal)
+fn resize_border(app: &mut App, delta: isize) -> Result<()> {
+    let (c, r) = terminal::size()?;
+    let min = 3isize;
+    let max = (r as isize).saturating_sub(5).max(3);
+    app.shell_rows = (app.shell_rows as isize + delta).clamp(min, max) as u16;
+    app.shell.resize(app.shell_rows, c);
+    app.status = format!("Borde movido · shell {} líneas", app.shell_rows);
+    Ok(())
+}
+
+/// una tecla pulsada → bytes que espera un programa sobre un PTY
+/// (readline, tmux y cualquier TUI: htop, ranger…)
+fn key_bytes(k: KeyEvent) -> Vec<u8> {
+    let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = k.modifiers.contains(KeyModifiers::ALT);
+    let mut b: Vec<u8> = match k.code {
+        KeyCode::Enter => vec![b'\r'],
+        KeyCode::Tab => vec![b'\t'],
+        KeyCode::Backspace => vec![127],
+        KeyCode::Esc => vec![27],
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        KeyCode::Insert => b"\x1b[2~".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Up => b"\x1b[A".to_vec(),
+        KeyCode::Down => b"\x1b[B".to_vec(),
+        KeyCode::Right => b"\x1b[C".to_vec(),
+        KeyCode::Left => b"\x1b[D".to_vec(),
+        KeyCode::F(n) => match n {
+            1 => b"\x1bOP".to_vec(),
+            2 => b"\x1bOQ".to_vec(),
+            3 => b"\x1bOR".to_vec(),
+            4 => b"\x1bOS".to_vec(),
+            5 => b"\x1b[15~".to_vec(),
+            6 => b"\x1b[17~".to_vec(),
+            7 => b"\x1b[18~".to_vec(),
+            8 => b"\x1b[19~".to_vec(),
+            9 => b"\x1b[20~".to_vec(),
+            10 => b"\x1b[21~".to_vec(),
+            11 => b"\x1b[23~".to_vec(),
+            12 => b"\x1b[24~".to_vec(),
+            _ => vec![],
+        },
+        KeyCode::Char(c) => {
+            if ctrl {
+                let l = c.to_ascii_lowercase() as u8;
+                if (32..127).contains(&l) {
+                    vec![l & 0x1f] // Ctrl+A = 0x01 … Ctrl+Z = 0x1a
+                } else {
+                    vec![]
+                }
+            } else {
+                c.to_string().into_bytes()
+            }
+        }
+        _ => vec![],
+    };
+    if alt {
+        b.insert(0, 27); // Alt+letra = ESC+letra (meta de readline)
+    }
+    b
+}
+
 const HELP_TEXT: &str = r#"PIGMACS · MANUAL COMPLETO
 ═══════════════════════════
-NAVEGACIÓN ENTRE PANELES
-  Shift+←             tree de ficheros
-  Shift+→ / Shift+↑   editor (o panel IA)
-  Shift+↓             terminal
-  Ctrl+B              mostrar/ocultar y enfocar el tree
-  Ctrl+A              alternar editor <-> panel IA
-  Tab                 shell <-> ventana anterior
-  Ctrl+Shift+↑/↓      mover el borde editor/terminal
+ATAJOS EN DOS GRUPOS
+  Ctrl+<letra>  grupo TTY — funciona en cualquier consola de texto
+  Alt+<letra>   grupo GUI — para terminales en entornos gráficos
+  (misma letra = misma acción; Ctrl+B queda libre para tmux)
+  en modo SHELL las teclas van al programa de dentro: Ctrl+B (prefijo
+  tmux), Ctrl+A/E/K/R (readline) se respetan; solo Ctrl+Q, Ctrl+S,
+  Ctrl+Enter y Shift+Tab siguen siendo de pigmacs
+
+ACCIONES GLOBALES
+  Ctrl+Q / Alt+Q     salir (avisa si hay cambios sin guardar)
+  Ctrl+S / Alt+S     guardar (pide sudo si el fichero es de root)
+  Ctrl+A / Alt+A     alternar editor <-> panel IA
+  Ctrl+F / Alt+F     mostrar/ocultar y enfocar el tree
+  Ctrl+T / Alt+T     ir al terminal (shell)
+  Ctrl+V / Alt+V     volver al editor
+  Ctrl+E / Ctrl+Enter enviar selección (o línea entera) al shell
+  Ctrl+R / Alt+R     rehacer
+  Ctrl+K / Alt+K     limpiar la pantalla de la terminal
+  Ctrl+U / Ctrl+D    subir/bajar el borde (más terminal / más editor)
+  Ctrl+N / Alt+N     nueva conversación IA (dentro del panel IA)
+  F1 / ?             esta ayuda
+  Shift+←/→/↑/↓      árbol · editor · terminal (grupo gui)
+  Ctrl+Shift+↑/↓     mover el borde editor/terminal (grupo gui)
+  Tab / Shift+Tab    alternar terminal <-> ventana anterior
 
 EDITOR · MODO NORMAL
   h j k l / ←↓↑→      mover el cursor
@@ -1389,7 +1557,6 @@ EDITOR · MODO NORMAL
   x                   borrar carácter · dd borrar línea
   u                   deshacer · Ctrl+R rehacer
   v                   selección visual
-  Ctrl+E              enviar selección (o línea entera) al shell
   /                   buscar · n/N siguiente/anterior
   m + letra           fijar marca · ' + letra saltar a ella
   G / gg              final / principio · 12G ir a la línea 12
@@ -1414,7 +1581,10 @@ MODO VISUAL
 
 TERMINAL
   ↑↓                  historial de comandos (colores ANSI incluidos)
-  Ctrl+K              limpiar la pantalla del terminal
+  Home/Fin/Pág↑/Pág↓  navegación del propio readline (nuevo)
+  Ctrl+B              prefijo de tmux: llega al programa de dentro
+  Ctrl+A/E/K/R        reservados para readline (emacs) dentro del shell
+  Ctrl+K              limpiar la pantalla (desde el editor/IA/tree)
 
 TREE DE FICHEROS
   j k                 mover · l/Enter abrir · h subir
@@ -1439,9 +1609,13 @@ GENERAL
   Ctrl+Q              salir (avisa si hay cambios sin guardar)
   Ctrl+S              guardar
   Ctrl+K              limpiar la terminal
+  Ctrl+F / Ctrl+T     tree de ficheros / terminal
 "#;
 
 fn handle_help_key(app: &mut App, k: KeyEvent) {
+    if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return;
+    }
     match k.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.help_open = false;
@@ -1506,6 +1680,10 @@ fn handle_sudo_key(app: &mut App, k: KeyEvent) {
 }
 
 fn handle_browser_key(app: &mut App, k: KeyEvent) {
+    // los Ctrl/Alt no son comandos del navegador (Ctrl+B es de tmux, va al programa de dentro)
+    if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return;
+    }
     match k.code {
         KeyCode::Char('j') | KeyCode::Down => app.browser.cursor_down(),
         KeyCode::Char('k') | KeyCode::Up => app.browser.cursor_up(),
@@ -1604,7 +1782,9 @@ fn handle_ai_key(app: &mut App, k: KeyEvent) {
                 app.ai_input.clear();
             }
         }
-        KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char(c)
+            if !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
             app.ai_input.push(c);
         }
         _ => {}
@@ -1612,6 +1792,11 @@ fn handle_ai_key(app: &mut App, k: KeyEvent) {
 }
 
 fn handle_editor_key(app: &mut App, k: KeyEvent) {
+    // los Ctrl/Alt que no son atajos no deben ejecutar comandos del editor
+    // (p. ej. Ctrl+X no puede borrar como si fuese la tecla x)
+    if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+        return;
+    }
     match app.mode {
         Mode::Normal => {
             // secuencias de dos teclas (gg, dd, z + a/o/c/r/m, m<x> marca, '<x> salto)
@@ -1923,30 +2108,7 @@ fn compute_matches(lines: &[String], query: &str) -> Vec<(usize, usize)> {
 }
 
 fn send_key_to_shell(writer: &mut Box<dyn Write + Send>, k: KeyEvent) -> Result<()> {
-    let mut bytes = Vec::new();
-
-    if k.modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char(c) = k.code {
-            let c = c.to_ascii_lowercase() as u8;
-            if (b'a'..=b'z').contains(&c) {
-                bytes.push(c - b'a' + 1);
-            }
-        }
-    } else {
-        match k.code {
-            KeyCode::Enter => bytes.push(b'\r'),
-            KeyCode::Backspace => bytes.push(127),
-            KeyCode::Tab => bytes.push(b'\t'),
-            KeyCode::Esc => bytes.push(27),
-            KeyCode::Char(c) => bytes.extend_from_slice(c.to_string().as_bytes()),
-            KeyCode::Up => bytes.extend_from_slice(b"\x1b[A"),
-            KeyCode::Down => bytes.extend_from_slice(b"\x1b[B"),
-            KeyCode::Right => bytes.extend_from_slice(b"\x1b[C"),
-            KeyCode::Left => bytes.extend_from_slice(b"\x1b[D"),
-            _ => {}
-        }
-    }
-
+    let bytes = key_bytes(k);
     if !bytes.is_empty() {
         writer.write_all(&bytes)?;
         writer.flush()?;
@@ -2335,16 +2497,16 @@ fn draw(app: &mut App) -> Result<()> {
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
     let help = match app.mode {
         Mode::Normal | Mode::Insert | Mode::Visual => {
-            "Ctrl+B tree · i · u deshacer · Ctrl+R rehacer · Tab/za plegar · m marca · ? ayuda · Ctrl+E enviar · Ctrl+S · Ctrl+Q"
+            "Ctrl+F tree · Ctrl+T terminal · i · u deshacer · Ctrl+R rehacer · Tab/za plegar · m marca · F1/? ayuda · Ctrl+E enviar · Ctrl+S · Ctrl+Q"
         }
         Mode::Browser => {
-            "j/k mover · l/h entrar/subir · b marca · B saltar · g/G extremos · Esc editor · Ctrl+B ocultar"
+            "j/k mover · l/h entrar/subir · b marca · B saltar · g/G extremos · Esc editor · Ctrl+F ocultar"
         }
         Mode::Ai => {
-            "Enter enviar · ↑/↓ historial · v seleccionar · Ctrl+E enviar · Ctrl+N nueva · Ctrl+B tree · Esc cancelar · Tab shell"
+            "Enter enviar · ↑/↓ historial · v seleccionar · Ctrl+E enviar · Ctrl+N nueva · Esc cancelar · Tab shell"
         }
         Mode::Shell => {
-            "escribe comandos · Shift+Tab editor · Ctrl+B tree · Ctrl+E enviar · Ctrl+Shift+↑↓ borde · Ctrl+Q salir"
+            "escribe comandos · Ctrl+B tmux · Ctrl+A/E/K readline · Shift+Tab editor · Ctrl+Q salir"
         },
     };
     let help_text: String = help.chars().take(w as usize).collect();
@@ -2423,7 +2585,7 @@ fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
     let title: String = if app.mode == Mode::Browser {
         format!("┌ {} {} ", dirname, if starred { "★" } else { "" })
     } else {
-        format!("┌ {} {} · Ctrl+B ", dirname, if starred { "★" } else { "" })
+        format!("┌ {} {} · Ctrl+F ", dirname, if starred { "★" } else { "" })
     }
     .chars()
     .take(bx.saturating_sub(1) as usize)
