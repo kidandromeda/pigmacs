@@ -75,6 +75,24 @@ s.resize()
 s.repaint()
 check("resize con htop no lo rompe", "PROG" in s.scr.text() and "Load average" in s.scr.text())
 
+# ——— Ctrl+J: escape al editor dejando el programa en marcha ———
+s.send(b"\x0a", 0.7)
+s.read(0.6)
+t = s.scr.text()
+check("Ctrl+J va al editor dejando el programa", "NORMAL" in t and "PROG" not in t)
+alive = subprocess.run(["pgrep", "-x", "htop"], capture_output=True, text=True).stdout.strip()
+check("el programa sigue vivo tras Ctrl+J", len(alive.split()) == BASE_HTOP + 1, alive)
+
+# ——— Ctrl+P + Enter sobre el mismo programa recupera el foco ———
+s.send("\x10", 0.5)                       # Ctrl+P
+s.read(0.4)
+check("menú con el programa en segundo plano", "Lanzar programa" in s.scr.text())
+s.send("\r", 0.8)                         # Enter sobre htop (ya en marcha)
+s.read(0.6)
+s.repaint()
+t = s.scr.text()
+check("Enter sobre el mismo programa recupera el foco", "PROG" in t and "Load average" in t)
+
 # ——— Ctrl+G cierra ———
 s.send("\x07", 0.7)                       # Ctrl+G
 s.read(0.6)

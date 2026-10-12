@@ -51,11 +51,13 @@ cargo build --release
 
 **Shell** — terminal PTY real:
 - `Shift+Tab` / `Ctrl+T` — alternar terminal/editor (`Tab` es autocompletar)
+- `Ctrl+J` — volver al editor **también en tty reales** (allí el teclado del
+  kernel no genera `Shift+Tab`; el byte `0x0A` de `Ctrl+J` sí llega siempre)
 - `Ctrl+E` o `Ctrl+Enter` — enviar la selección visual al shell
 - dentro del shell se respetan las teclas del programa de dentro:
   `Ctrl+B` (prefijo de tmux), `Ctrl+A`/`Ctrl+E`/`Ctrl+K`/`Ctrl+R` (readline/emacs),
-  `Ctrl+C`, `Ctrl+D`, `Ctrl+L`, `Ctrl+U`, `Ctrl+W`… — solo `Ctrl+Q`, `Ctrl+S`
-  y `Shift+Tab` siguen siendo de pigmacs
+  `Ctrl+C`, `Ctrl+D`, `Ctrl+L`, `Ctrl+U`, `Ctrl+W`… — solo `Ctrl+Q`, `Ctrl+S`,
+  `Ctrl+Enter`, `Ctrl+J` y `Shift+Tab` siguen siendo de pigmacs
 
 **IA** (fase 3):
 - `Ctrl+A` / `Alt+A` — alternar editor/panel IA (en el shell: `Shift+Tab` antes)
@@ -76,6 +78,7 @@ control ASCII que llegan siempre en una consola de texto) y otro para
 | tree de ficheros | `Ctrl+F` | `Alt+F` |
 | ir al terminal | `Ctrl+T` | `Alt+T` |
 | volver al editor | `Ctrl+V` | `Alt+V` |
+| volver al editor desde el shell/programa | `Ctrl+J` | — |
 | enviar selección al shell | `Ctrl+E` | `Ctrl+Enter` |
 | rehacer | `Ctrl+R` | `Alt+R` |
 | limpiar la terminal | `Ctrl+K` | `Alt+K` |
@@ -107,8 +110,10 @@ en modo SHELL (cede a readline).
   de scroll, respuestas DSR/DA, wrap diferido)
 - mientras está activo, sus teclas le ceden: sólo `Ctrl/Alt+Q` (salir),
   `Ctrl/Alt+S` (guardar el fichero), `Ctrl/Alt+P` (menú), `Ctrl/Alt+G`
-  (cerrar el programa) y `Shift+Tab` (saltar al shell y volver) siguen siendo
-  de pigmacs
+  (cerrar el programa), `Ctrl+J` (volver al editor dejándolo en segundo
+  plano) y `Shift+Tab` (saltar al shell y volver) siguen siendo de pigmacs
+- si dejas el programa con `Ctrl+J`, `Ctrl+P` + `Enter` sobre el mismo
+  programa recupera su foco sin relanzarlo
 - el PTY se redimensiona solo con la terminal, el borde editor/shell y el tree
 - si el programa termina solo, pigmacs vuelve al editor y lo indica en el status
 - `Ctrl+G` mata el programa y no deja zombies ni huérfanos

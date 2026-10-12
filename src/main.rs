@@ -2039,8 +2039,9 @@ fn run(app: &mut App) -> Result<()> {
                     continue;
                 }
                 // ——— programa en la ventana principal ———
-                // solo Q/S/P/G (y F1) siguen siendo de pigmacs; el resto de
-                // teclas ceden al programa (Ctrl+A, Ctrl+F, flechas…)
+                // sólo Q/S/P/G, Ctrl+J (volver al editor) y F1 siguen siendo
+                // de pigmacs; el resto de teclas ceden al programa (Ctrl+A,
+                // Ctrl+F, flechas…)
                 if app.mode == Mode::Program {
                     if k.code == KeyCode::F(1) {
                         app.help_open = true;
@@ -2052,7 +2053,8 @@ fn run(app: &mut App) -> Result<()> {
                             Shortcut::Quit
                             | Shortcut::Save
                             | Shortcut::Menu
-                            | Shortcut::CloseProgram => {
+                            | Shortcut::CloseProgram
+                            | Shortcut::ToEditor => {
                                 if let Some(quit) = shortcut(app, sc)? {
                                     if quit {
                                         break;
@@ -2152,7 +2154,9 @@ fn run(app: &mut App) -> Result<()> {
 //                              (ESC+letra; en el shell ceden el paso al readline)
 // Reservadas para el programa de dentro (tmux, readline…): Ctrl+B es el prefijo
 // de tmux y Ctrl+A/E/K/R/C/D/L/U/W/Y… son de readline: en modo SHELL no se
-// interceptan ninguno de los dos grupos (solo Ctrl+Q, Ctrl+S y Shift+Tab).
+// interceptan ninguno de los dos grupos (solo Ctrl+Q, Ctrl+S, Ctrl+Enter,
+// Ctrl+J y Shift+Tab). Ctrl+J existe porque en las tty reales el kernel no
+// genera Shift+Tab (CSI Z), pero el byte 0x0A de Ctrl+J sí llega siempre.
 enum Shortcut {
     Quit,
     Save,
@@ -2168,6 +2172,7 @@ enum Shortcut {
     BorderDown,
     Menu,         // Ctrl/Alt+P: lanzar un programa en la ventana principal
     CloseProgram, // Ctrl/Alt+G: cerrar el programa en marcha
+    ToEditor,     // Ctrl+J: volver al editor (escape seguro en tty reales)
 }
 
 /// resuelve un atajo de cualquiera de los dos grupos (Ctrl+letra o Alt+letra)
@@ -2194,6 +2199,16 @@ fn shortcut_of(k: KeyEvent) -> Option<Shortcut> {
         'd' => Shortcut::BorderDown,
         'p' => Shortcut::Menu,
         'g' => Shortcut::CloseProgram,
+        // Ctrl+J = volver al editor. Reservado incluso en el shell: en las tty
+        // reales Shift+Tab no se genera, pero el kernel sí entrega siempre el
+        // byte 0x0A de Ctrl+J (Alt+J queda sin asignar)
+        'j' => {
+            if ctrl {
+                Shortcut::ToEditor
+            } else {
+                return None;
+            }
+        }
         _ => return None,
     })
 }
@@ -2244,6 +2259,9 @@ fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
                 m => m,
             };
         }
+        // Ctrl+J: volver al editor. Reservado también en el shell y en el modo
+        // programa: en las tty reales Shift+Tab no llega, pero Ctrl+J sí
+        Shortcut::ToEditor => app.mode = Mode::Normal,
         Shortcut::Send => match app.mode {
             Mode::Normal | Mode::Visual => app.send_selection()?,
             Mode::Ai => app.send_ai_selection()?,
@@ -2448,7 +2466,12 @@ fn handle_menu_key(app: &mut App, k: KeyEvent) {
         KeyCode::Enter => {
             if let Some(&name) = entries.get(app.menu_cursor) {
                 app.menu_open = false;
-                if let Err(e) = launch_program(app, name) {
+                // si ese programa ya está en marcha, sólo se recupera el foco
+                // (así Ctrl+J al editor no lo pierde: Ctrl+P + Enter lo recupera)
+                if app.program.as_ref().map(|p| p.name.as_str()) == Some(name) {
+                    app.mode = Mode::Program;
+                    app.status = format!("«{name}» en marcha · Ctrl+G lo cierra");
+                } else if let Err(e) = launch_program(app, name) {
                     app.status = format!("No se pudo lanzar {name}: {e}");
                 }
             }
@@ -2512,9 +2535,9 @@ ATAJOS EN DOS GRUPOS
   (misma letra = misma acción; Ctrl+B queda libre para tmux)
   en modo SHELL las teclas van al programa de dentro: Ctrl+B (prefijo
   tmux), Ctrl+A/E/K/R (readline) se respetan; solo Ctrl+Q, Ctrl+S,
-  Ctrl+Enter y Shift+Tab siguen siendo de pigmacs
-  en modo PROG (programa lanzado con Ctrl+P) sólo Ctrl/Alt+Q, S, P y G
-  son de pigmacs; el resto de teclas ceden al programa en marcha
+  Ctrl+Enter, Ctrl+J y Shift+Tab siguen siendo de pigmacs
+  en modo PROG (programa lanzado con Ctrl+P) sólo Ctrl/Alt+Q, S, P, G y
+  Ctrl+J son de pigmacs; el resto de teclas ceden al programa en marcha
 
 ACCIONES GLOBALES
   Ctrl+Q / Alt+Q     salir (avisa si hay cambios sin guardar)
@@ -2523,6 +2546,8 @@ ACCIONES GLOBALES
   Ctrl+F / Alt+F     mostrar/ocultar y enfocar el tree
   Ctrl+T / Alt+T     ir al terminal (shell)
   Ctrl+V / Alt+V     volver al editor
+  Ctrl+J             volver al editor desde el shell/programa
+                     (escape para tty reales: Shift+Tab no llega allí)
   Ctrl+E / Ctrl+Enter enviar selección (o línea entera) al shell
   Ctrl+R / Alt+R     rehacer
   Ctrl+K / Alt+K     limpiar la pantalla de la terminal
@@ -2534,6 +2559,7 @@ ACCIONES GLOBALES
   Shift+←/→/↑/↓      árbol · editor · terminal (grupo gui)
   Ctrl+Shift+↑/↓     mover el borde editor/terminal (grupo gui)
   Tab / Shift+Tab    alternar terminal <-> ventana anterior
+                     (en tty reales usa Ctrl+J para volver al editor)
 
 EDITOR · MODO NORMAL
   h j k l / ←↓↑→      mover el cursor
@@ -2586,10 +2612,12 @@ PROGRAMAS EN LA VENTANA PRINCIPAL (Ctrl+P)
   se dibuja con un emulador VT100 (colores 256, pantalla alterna…)
   mientras está activo, sus teclas le ceden salvo Ctrl/Alt+Q (salir),
   Ctrl/Alt+S (guardar el fichero), Ctrl/Alt+P (menú), Ctrl/Alt+G (cerrar
-  el programa) y Shift+Tab (saltar al shell y volver)
+  el programa), Ctrl+J (volver al editor dejándolo en segundo plano) y
+  Shift+Tab (saltar al shell y volver)
   si el programa termina solo, pigmacs vuelve al editor y lo indica
   en el status; el menú también abre sobre un programa en marcha
-  (se lanza el nuevo y se cierra el anterior)
+  (se lanza el nuevo y se cierra el anterior; si eliges el que ya
+  está en marcha sólo se recupera su foco con Ctrl+P + Enter)
 
 PANEL IA (pi coding agent)
   Enter               enviar la pregunta
@@ -3637,10 +3665,10 @@ fn draw(app: &mut App) -> Result<()> {
             "Enter enviar · ↑/↓ historial · v seleccionar · Ctrl+E enviar · Ctrl+N nueva · Esc cancelar · Tab shell"
         }
         Mode::Shell => {
-            "escribe comandos · Ctrl+B tmux · Ctrl+A/E/K readline · Shift+Tab editor · Ctrl+Q salir"
+            "escribe comandos · Ctrl+B tmux · Ctrl+A/E/K readline · Ctrl+J editor · Ctrl+Q salir"
         },
         Mode::Program => {
-            "teclas al programa · Ctrl+P menú · Ctrl+G cerrar · Shift+Tab shell · Ctrl+Q salir"
+            "teclas al programa · Ctrl+P menú · Ctrl+G cerrar · Ctrl+J editor · Ctrl+Q salir"
         },
     };
     let help_text: String = help.chars().take(w as usize).collect();

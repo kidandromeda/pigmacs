@@ -27,8 +27,27 @@ control ASCII garantizados en cualquier consola de texto) y grupo *GUI*
 acción. =Ctrl+B= queda libre para el prefijo de tmux.
 
 En modo *SHELL* todas las teclas Ctrl/Alt ceden al programa de dentro
-(readline, tmux, htop…); sólo =Ctrl+Q=, =Ctrl+S=, =Ctrl+Enter= y =Shift+Tab=
-siguen siendo de pigmacs.
+(readline, tmux, htop…); sólo =Ctrl+Q=, =Ctrl+S=, =Ctrl+Enter=, =Ctrl+J= y
+=Shift+Tab= siguen siendo de pigmacs (=Ctrl+J= es el escape seguro para tty
+reales, ver 1.6).
+
+** 1.6 Bug: no se podía salir del shell en una tty real (arreglado)
+
+*Síntoma:* en una consola de texto real no había forma de volver al editor
+desde el shell: =Shift+Tab= no hacía nada.
+
+*Diagnóstico:* el *teclado del kernel* de las tty no genera el código de
+=Shift+Tab= (=CSI Z=) con la keymap por defecto; sólo llega en terminales
+gráficas (xterm, kitty, tmux sobre X…). pigmacs dependía de esa tecla como
+única salida del modo SHELL.
+
+*Arreglo:* =Ctrl+J= pasa a ser atajo *reservado* de pigmacs en modo SHELL y
+en modo PROG: =volver al editor=. Es la combinación correcta para esto
+porque el byte =0x0A= (LF) de =Ctrl+J= lo genera el teclado del kernel de
+forma fiable en cualquier consola (es el =Enter= de las líneas antiguas, no
+confundir con =Ctrl+M= = 0x0D = Enter). El manual y la barra de ayuda lo
+documentan; en el shell sólo siguen siendo de pigmacs ahora
+=Ctrl+Q=, =Ctrl+S=, =Ctrl+Enter=, =Ctrl+J= y =Shift+Tab=.
 
 ** 1.2 Bug: caracteres fantasma al borrar en el shell (arreglado)
 
@@ -86,9 +105,11 @@ PATH (=htop=, =btop=, =glances=, =ncdu=, =ranger=, =gitui=, =tmux=,
   DECCKM (flechas en modo aplicación), wrap diferido xenl, respuestas
   DSR/DA al programa.
 - *Cesión de teclas*: en modo PROG sólo =Ctrl/Alt+Q= (salir), =Ctrl/Alt+S=
-  (guardar el fichero), =Ctrl/Alt+P= (menú), =Ctrl/Alt+G= (cerrar) y
-  =Shift+Tab= (saltar al shell y volver) son de pigmacs; el resto va al
-  programa. El menú también se abre *encima* de un programa en marcha.
+  (guardar el fichero), =Ctrl/Alt+P= (menú), =Ctrl/Alt+G= (cerrar), =Ctrl+J=
+  (volver al editor dejándolo en segundo plano) y =Shift+Tab= (saltar al
+  shell y volver) son de pigmacs; el resto va al programa. El menú también
+  se abre *encima* de un programa en marcha, y elegir el programa que ya
+  está en marcha sólo recupera su foco (=Ctrl+P= + =Enter=).
 - El PTY se redimensiona solo con la terminal, con el borde editor/shell y
   con abrir/cerrar el tree.
 - Si el programa termina solo, pigmacs vuelve al editor y lo indica en el
@@ -292,8 +313,8 @@ mini-emulador VT100= (CUP/EL/ED/CR/LF) — necesario porque el renderer pinta
 | suite         | qué cubre                                              | checks |
 |---------------+--------------------------------------------------------+--------|
 | =test_partA.py= | limpieza al arrancar · Delete/Ctrl+U/Backspace sin fantasmas · salir | 6 |
-| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree, IA, borde, ayuda F1/?/Esc, shell, grupo Alt | 34 |
-| =test_fase2.py= | menú, navegar, lanzar htop, cesión de teclas, Shift+Tab, resize, Ctrl/G+Alt+G, huérfanos, fichero intacto | 29 |
+| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree, IA, borde, ayuda F1/?/Esc, shell (Ctrl+J y Shift+Tab), grupo Alt | 36 |
+| =test_fase2.py= | menú, navegar, lanzar htop, cesión de teclas, Ctrl+J + reenfoque, Shift+Tab, resize, Ctrl/G+Alt+G, huérfanos, fichero intacto | 33 |
 
 Uso (desde la raíz del repo):
 
@@ -302,7 +323,7 @@ cargo build
 python3 tests/test_partA.py && python3 tests/smoke_fase1.py && python3 tests/test_fase2.py
 #+END_SRC
 
-Estado: *69/69 en verde*.
+Estado: *75/75 en verde*.
 
 * 6. Estado de los commits
 

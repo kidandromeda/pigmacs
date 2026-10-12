@@ -22,6 +22,14 @@ s.read(0.6)
 check("Ctrl+T → modo SHELL", "SHELL" in s.scr.text())
 check("prompt de bash visible", ":~$" in s.scr.flat() or "humano@" in s.scr.text())
 
+# Ctrl+J: escape al editor que funciona en tty reales (Shift+Tab no llega)
+s.send(b"\x0a", 0.6)
+s.read(0.5)
+check("Ctrl+J vuelve al editor desde el shell", "NORMAL" in s.scr.text())
+s.send("\x14", 0.6)                      # Ctrl+T → shell otra vez
+s.read(0.6)
+check("Ctrl+T al shell tras Ctrl+J", "SHELL" in s.scr.text())
+
 # volver al editor con Shift+Tab
 s.send("\x1b[Z", 0.6)
 s.read(0.5)
