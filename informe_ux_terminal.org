@@ -100,6 +100,8 @@ PATH (=htop=, =btop=, =fastfetch=, =ncdu=, =gdu=, =nmtui=, =ranger=,
 =gitui=, =tmux=, =neovim=, =bluetui=, =jeeves=, =lynx=, =w3m=…). =j=/=k=
 o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
 
+- =neovim= se lanza como =nvim=; =lynx= y =w3m= arrancan en
+  =www.duckduckgo.com=.
 - El programa corre *sobre su propio PTY* ocupando el área del editor.
 - Se dibuja con un *emulador VT100* integrado (rejilla de celdas): colores
   256 y truecolor, pantalla alterna (=ESC[?1049=), región de scroll, SGR,
@@ -314,8 +316,8 @@ mini-emulador VT100= (CUP/EL/ED/CR/LF) — necesario porque el renderer pinta
 | suite         | qué cubre                                              | checks |
 |---------------+--------------------------------------------------------+--------|
 | =test_partA.py= | limpieza al arrancar · Delete/Ctrl+U/Backspace sin fantasmas · salir | 6 |
-| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree, IA, borde, ayuda F1/?/Esc, shell (Ctrl+J y Shift+Tab), grupo Alt | 36 |
-| =test_fase2.py= | menú, navegar, lanzar htop, cesión de teclas, Ctrl+J + reenfoque, Shift+Tab, resize, Ctrl/G+Alt+G, huérfanos, fichero intacto | 33 |
+| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree, IA, borde, ayuda F1/?/Esc (y F1 desde el shell), shell (Ctrl+J y Shift+Tab, Ctrl+T ida y vuelta), grupo Alt | 39 |
+| =test_fase2.py= | menú, navegar, lanzar htop, cesión de teclas, Ctrl+J + reenfoque, Shift+Tab, resize, Ctrl/G+Alt+G, huérfanos, fichero intacto | 35 |
 
 Uso (desde la raíz del repo):
 

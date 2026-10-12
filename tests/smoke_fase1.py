@@ -111,6 +111,20 @@ s.send("\x1b", 0.5)
 s.read(0.5)
 check("Esc no rompe nada tras cerrar", "NORMAL" in s.scr.text())
 
+# ——— F1 funciona desde el shell y Ctrl+T es de ida y vuelta ———
+s.send("\x14", 0.5)                      # Ctrl+T → shell
+s.read(0.4)
+check("Ctrl+T entra al shell", "SHELL" in s.scr.text())
+s.send("\x1bOP", 0.5)                    # F1 en el shell
+s.read(0.4)
+check("F1 en el shell abre la ayuda", "MANUAL" in s.scr.text())
+s.send("\x1bOP", 0.4)                    # F1 la cierra (sigues en el shell)
+s.read(0.4)
+check("cerrar la ayuda sigue en el shell", "SHELL" in s.scr.text())
+s.send("\x14", 0.5)                      # Ctrl+T → vuelve al editor
+s.read(0.4)
+check("Ctrl+T del shell vuelve al editor", "SHELL" not in s.scr.text())
+
 # limpiar el shell: escribir, ejecutar y Ctrl+K desde el editor
 s.send("\x14", 0.5)                      # Ctrl+T
 s.read(0.4)

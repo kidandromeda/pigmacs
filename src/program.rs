@@ -19,10 +19,23 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-/// programas disponibles en el menú (se comprueba el PATH al dibujarlo)
-pub(crate) const MENU: [&str; 14] = [
-    "htop", "btop", "fastfetch", "ncdu", "gdu", "nmtui", "ranger", "gitui",
-    "tmux", "neovim", "bluetui", "jeeves", "lynx", "w3m",
+/// programas del menú: (nombre visible, argv de lanzamiento).
+/// El filtro de PATH se hace con `argv[0]` al dibujarlo.
+pub(crate) const MENU: [(&str, &[&str]); 14] = [
+    ("htop", &["htop"]),
+    ("btop", &["btop"]),
+    ("fastfetch", &["fastfetch"]),
+    ("ncdu", &["ncdu"]),
+    ("gdu", &["gdu"]),
+    ("nmtui", &["nmtui"]),
+    ("ranger", &["ranger"]),
+    ("gitui", &["gitui"]),
+    ("tmux", &["tmux"]),
+    ("neovim", &["nvim"]),
+    ("bluetui", &["bluetui"]),
+    ("jeeves", &["jeeves"]),
+    ("lynx", &["lynx", "www.duckduckgo.com"]),
+    ("w3m", &["w3m", "www.duckduckgo.com"]),
 ];
 
 /// ¿está el programa en el PATH y es ejecutable?
@@ -81,13 +94,14 @@ impl Program {
     }
 }
 
-/// programas del menú que están instalados en el PATH
-pub(crate) fn menu_entries() -> Vec<&'static str> {
-    MENU.iter().copied().filter(|m| in_path(m)).collect()
+/// programas del menú instalados en el PATH: (visible, argv)
+pub(crate) fn menu_entries() -> Vec<(&'static str, &'static [&'static str])> {
+    MENU.iter().copied().filter(|(_, argv)| in_path(argv[0])).collect()
 }
 
-/// lanza `name` sobre su propio PTY ocupando el área del editor
-pub(crate) fn launch_program(app: &mut App, name: &str) -> Result<()> {
+/// lanza `name` (nombre visible) ejecutando `argv` sobre su propio PTY,
+/// ocupando el área del editor
+pub(crate) fn launch_program(app: &mut App, name: &str, argv: &[&str]) -> Result<()> {
     close_program(app); // si ya había uno, se cierra antes de lanzar otro
     let (cols, rows) = terminal::size()?;
     let (editor_rows, _) = layout(rows, app.shell_rows);
@@ -101,7 +115,8 @@ pub(crate) fn launch_program(app: &mut App, name: &str) -> Result<()> {
         pixel_width: 0,
         pixel_height: 0,
     })?;
-    let mut cmd = CommandBuilder::new(name);
+    let mut cmd = CommandBuilder::new(argv[0]);
+    cmd.args(&argv[1..]);
     cmd.env("TERM", env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()));
     cmd.cwd(&app.work_dir);
     let child = pty.slave.spawn_command(cmd)?;
@@ -158,14 +173,14 @@ pub(crate) fn handle_menu_key(app: &mut App, k: KeyEvent) {
             app.menu_cursor = app.menu_cursor.saturating_sub(1);
         }
         KeyCode::Enter => {
-            if let Some(&name) = entries.get(app.menu_cursor) {
+            if let Some((name, argv)) = entries.get(app.menu_cursor).copied() {
                 app.menu_open = false;
                 // si ese programa ya está en marcha, sólo se recupera el foco
                 // (así Ctrl+J al editor no lo pierde: Ctrl+P + Enter lo recupera)
                 if app.program.as_ref().map(|p| p.name.as_str()) == Some(name) {
                     app.mode = Mode::Program;
                     app.status = format!("«{name}» en marcha · Ctrl+G lo cierra");
-                } else if let Err(e) = launch_program(app, name) {
+                } else if let Err(e) = launch_program(app, name, argv) {
                     app.status = format!("No se pudo lanzar {name}: {e}");
                 }
             }
@@ -181,7 +196,7 @@ pub(crate) fn draw_menu(app: &mut App, bx: u16, area_w: u16, rows: u16, fr: &mut
     let mut lines: Vec<String> = entries
         .iter()
         .enumerate()
-        .map(|(i, n)| format!("{}{n}", if i == cur { "▸ " } else { "  " }))
+        .map(|(i, (name, _))| format!("{}{name}", if i == cur { "▸ " } else { "  " }))
         .collect();
     if lines.is_empty() {
         lines.push("sin programas en el PATH".into());

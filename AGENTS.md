@@ -24,11 +24,11 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (75 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (80 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 36 checks — smoke de fases anteriores
-python3 test_fase2.py      # 33 checks — menú, VT100, shell, Ctrl+J, resize…
+python3 smoke_fase1.py     # 39 checks — smoke de fases anteriores
+python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize…
 ```
 
 - **No hay tests en Rust**: la garantía son las suites Python, que abren el
@@ -49,7 +49,7 @@ python3 test_fase2.py      # 33 checks — menú, VT100, shell, Ctrl+J, resize�
 | `frame.rs` | 149 | `Style`, `Cell`, `Frame` (rejilla), `render_frame()` (pintado por diff), `strip_ansi()` |
 | `term.rs` | 679 | `Term` + `PState`: emulador VT100 completo (`feed`, `parse_sgr`, scroll, alt screen, línea de comandos…), `draw()` |
 | `shell.rs` | 316 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `csi_shell`, `draw_shell_output`, `resize` |
-| `program.rs` | 222 | `Program` (PTY del programa), `MENU`, `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
+| `program.rs` | 222 | `Program` (PTY del programa), `MENU` (14 entradas: nombre visible + argv), `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
 | `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` |
 | `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd`, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
@@ -85,8 +85,9 @@ el split fue mecánico y deliberadamente aburrido.
 
 `shortcut_of()` (`main.rs`): **Ctrl o Alt + letra** (XOR; AltGr no cuenta).
 
-- `q` salir · `s` guardar · `p` menú · `g` cerrar programa · `t` shell ·
-  `v` editor · `f` tree · `a` IA · `n` nueva IA · `e` enviar · `r` redo ·
+- `q` salir · `s` guardar · `p` menú · `g` cerrar programa · `t` terminal
+  (ida y vuelta: desde el shell vuelve al modo anterior) · `v` editor ·
+  `f` tree · `a` IA · `n` nueva IA · `e` enviar · `r` redo ·
   `k` limpiar shell · `u`/`d` bordes
 - **`j` sólo con Ctrl**: `Ctrl+J` = volver al editor (`Shortcut::ToEditor`);
   `Alt+J` está sin asignar.
@@ -96,6 +97,9 @@ Reglas críticas que **no se deben romper**:
 - **`Ctrl+J` es el escape de la tty real**: en consola de verdad `Shift+Tab`
   no llega (el teclado del kernel no genera `CSI Z`), pero el kernel sí entrega
   siempre el byte `0x0A`. Debe seguir funcionando desde SHELL y PROG.
+- **`Ctrl+T` es toggle**: entra al shell y desde allí vuelve al modo del que
+  se abrió (`top_mode`). `?` sólo abre la ayuda en el editor: en el shell y en
+  el panel IA es imprimible y debe ceder.
 - `Enter` sobre un programa **ya en marcha** en el menú recupera el foco
   **sin relanzarlo**.
 - Con un programa activo sólo se consumen `Ctrl/Alt+Q/S/P/G`, `Ctrl+J` y
@@ -126,4 +130,4 @@ Reglas críticas que **no se deben romper**:
 
 - **v2.0.0** commiteada localmente: split de `main.rs` en 10 módulos + menú de
   14 programas. Commit `52facf6` y tag `v2.0.0` **sólo locales** (sin push).
-- 75/75 checks en verde, 0 warnings.
+- 80/80 checks en verde, 0 warnings.

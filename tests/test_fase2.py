@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fase 2: menú Ctrl+P · programa en la ventana principal · Ctrl+G lo cierra."""
-import sys, time, os, subprocess
+import sys, time, os, subprocess, shutil
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ptylib import Session, check_factory
 
@@ -23,6 +23,10 @@ check("Ctrl+P abre el menú", "Lanzar programa" in t)
 check("menú lista los programas", "htop" in t and "tmux" in t and "ranger" in t, t)
 check("cursor en la 1ª entrada", "▸ htop" in t)
 check("pie del menú", "Enter lanzar" in t)
+# el menú sólo muestra lo del PATH: neovim se lanza como nvim y
+# lynx/w3m necesitan URL de arranque (se comprueba que aparezcan)
+check("menú muestra neovim si existe nvim", ("neovim" in t) == (shutil.which("nvim") is not None), t)
+check("menú muestra lynx/w3m si existen", ("lynx" in t and "w3m" in t) == (shutil.which("lynx") is not None and shutil.which("w3m") is not None), t)
 
 s.send("j", 0.3)                          # baja
 s.read(0.3)

@@ -34,7 +34,7 @@ ACCIONES GLOBALES
   Ctrl+S / Alt+S     guardar (pide sudo si el fichero es de root)
   Ctrl+A / Alt+A     alternar editor <-> panel IA
   Ctrl+F / Alt+F     mostrar/ocultar y enfocar el tree
-  Ctrl+T / Alt+T     ir al terminal (shell)
+  Ctrl+T / Alt+T     terminal: ir y salir (vuelve al modo anterior)
   Ctrl+V / Alt+V     volver al editor
   Ctrl+J             volver al editor desde el shell/programa
                      (escape para tty reales: Shift+Tab no llega allí)
@@ -45,7 +45,7 @@ ACCIONES GLOBALES
   Ctrl+N / Alt+N     nueva conversación IA (dentro del panel IA)
   Ctrl+P / Alt+P     menú para lanzar programas en la ventana principal
   Ctrl+G / Alt+G     cerrar el programa en marcha
-  F1 / ?             esta ayuda
+  F1 / ?             esta ayuda (en cualquier panel, el shell incluido)
   Shift+←/→/↑/↓      árbol · editor · terminal (grupo gui)
   Ctrl+Shift+↑/↓     mover el borde editor/terminal (grupo gui)
   Tab / Shift+Tab    alternar terminal <-> ventana anterior
@@ -98,6 +98,7 @@ PROGRAMAS EN LA VENTANA PRINCIPAL (Ctrl+P)
   j k / ↑↓            mover por el menú · Enter lanzar · Esc/q cerrar
   (sólo aparecen los instalados en el PATH: htop, btop, fastfetch,
    ncdu, gdu, nmtui, ranger, gitui, tmux, neovim, bluetui, jeeves, lynx, w3m)
+   (neovim se lanza como nvim; lynx y w3m abren www.duckduckgo.com)
   el programa corre sobre su propio PTY ocupando el área del editor y
   se dibuja con un emulador VT100 (colores 256, pantalla alterna…)
   mientras está activo, sus teclas le ceden salvo Ctrl/Alt+Q (salir),
@@ -125,7 +126,7 @@ GENERAL
   Ctrl+Q              salir (avisa si hay cambios sin guardar)
   Ctrl+S              guardar
   Ctrl+K              limpiar la terminal
-  Ctrl+F / Ctrl+T     tree de ficheros / terminal
+  Ctrl+F / Ctrl+T     tree de ficheros / terminal (T: ir y salir)
   Ctrl+P / Ctrl+G     menú de programas / cerrar programa en marcha
 "#;
 

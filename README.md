@@ -76,7 +76,7 @@ control ASCII que llegan siempre en una consola de texto) y otro para
 | guardar | `Ctrl+S` | `Alt+S` |
 | panel IA | `Ctrl+A` | `Alt+A` |
 | tree de ficheros | `Ctrl+F` | `Alt+F` |
-| ir al terminal | `Ctrl+T` | `Alt+T` |
+| ir/salir del terminal | `Ctrl+T` | `Alt+T` |
 | volver al editor | `Ctrl+V` | `Alt+V` |
 | volver al editor desde el shell/programa | `Ctrl+J` | — |
 | enviar selección al shell | `Ctrl+E` | `Ctrl+Enter` |
@@ -104,7 +104,8 @@ Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 (`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`, `gitui`,
 `tmux`, `neovim`, `bluetui`, `jeeves`, `lynx`, `w3m`…):
 `j`/`k` o flechas mueven, `Enter` lanza, `Esc`/`q` cierra. El menú no se abre
-en modo SHELL (cede a readline).
+en modo SHELL (cede a readline). `neovim` se lanza con el comando `nvim`;
+`lynx` y `w3m` arrancan en `www.duckduckgo.com`.
 
 - el programa corre sobre **su propio PTY** ocupando el área del editor, con un
   emulador VT100 integrado (colores 256 / truecolor, pantalla alterna, región

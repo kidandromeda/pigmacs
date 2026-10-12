@@ -436,8 +436,8 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                 {
                     continue;
                 }
-                // F1: ayuda (ambos grupos; en el shell se queda para el programa de dentro)
-                if k.code == KeyCode::F(1) && app.mode != Mode::Shell {
+                // F1: ayuda desde cualquier panel, el shell incluido
+                if k.code == KeyCode::F(1) {
                     app.help_open = true;
                     app.help_scroll = 0;
                     continue;
@@ -590,7 +590,14 @@ pub(crate) fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
                 app.mode = Mode::Browser;
             }
         }
-        Shortcut::Terminal if in_shell => return Ok(None),
+        // Ctrl+T / Alt+T es de ida y vuelta: desde el shell vuelve al modo
+        // del que se abrió (editor, tree… o el programa si estaba debajo)
+        Shortcut::Terminal if in_shell => {
+            app.mode = match app.top_mode {
+                Mode::Shell => Mode::Normal, // salvaguarda: top_mode no es Shell
+                m => m,
+            };
+        }
         Shortcut::Terminal => {
             app.top_mode = app.mode;
             app.mode = Mode::Shell;
