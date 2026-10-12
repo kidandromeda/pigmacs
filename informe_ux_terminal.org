@@ -1,0 +1,311 @@
+#+TITLE: pigmacs — informe de mejoras de UX en terminal (fase 3)
+#+AUTHOR: vibecoding session · 2026-10-12
+#+STARTUP: overview
+
+* Resumen ejecutivo
+
+Este informe recoge tres bloques:
+
+1. *Entregado y verificado* — rediseño de atajos en dos grupos (fase 1) y
+   arreglo de tres bugs de terminal (fantasmas del Delete, pantalla sucia al
+   arrancar, avisos del kernel).
+2. *Entregado en esta fase* — el menú =pigmacs= para lanzar programas en la
+   ventana principal con su propio PTY y emulador VT100 (fase 2).
+3. *Propuestas priorizadas* — coloreado de código, configuración, mouse,
+   pegado seguro, etc., con estimación y riesgo.
+
+Todo lo entregado está verificado con tres suites de tests en PTY que
+reconstruyen la pantalla con un mini-emulador VT100 (ver [[*Cómo verificarlo][Cómo verificarlo]]).
+
+* 1. Entregado y verificado
+
+** 1.1 Atajos en dos grupos (fase 1, commit =ae18ae7=)
+
+Cada acción global tiene dos atajos: grupo *TTY* (=Ctrl+letra=, bytes de
+control ASCII garantizados en cualquier consola de texto) y grupo *GUI*
+(=Alt+letra=, ESC+letra, para terminales gráficas). Misma letra = misma
+acción. =Ctrl+B= queda libre para el prefijo de tmux.
+
+En modo *SHELL* todas las teclas Ctrl/Alt ceden al programa de dentro
+(readline, tmux, htop…); sólo =Ctrl+Q=, =Ctrl+S=, =Ctrl+Enter= y =Shift+Tab=
+siguen siendo de pigmacs.
+
+** 1.2 Bug: caracteres fantasma al borrar en el shell (arreglado)
+
+*Síntoma:* en modo SHELL, =Delete= / =Ctrl+U= / =Backspace= dejaban restos en
+pantalla (p. ej. =echo aabcc= donde bash había ejecutado =echo aab=).
+
+*Diagnóstico:* el shell borraba *correctamente* su línea; el error era sólo
+de pintado. =draw_shell_output= ignoraba los CSI de manipulación de celdas:
+=ESC[nP= (borrar carácter), =ESC[K= (borrar hasta fin de línea), =ESC[@=,
+=ESC[C=, =ESC[D=, =ESC[G=, =ESC[H=, =ESC[J=. El frame seguía mostrando el
+contenido antiguo de esas celdas.
+
+*Arreglo:* helper =csi_shell()= con seguimiento de la columna =x=, parámetros
+con valores por defecto (=n1=1=, =n0=0=) y los seis CSI implementados
+(DCH/ICH/EL/ED/CUF/CUB/CHA/CUP). La pantalla coincide ahora con la ejecución
+real de bash (test: pintar =echo aab= tras tres =Delete= y comparar con la
+salida de =echo=).
+
+** 1.3 Bug: pantalla anterior visible al arrancar en TTY (arreglado)
+
+*Síntoma:* arrancar =pigmacs= en una consola dejaba ver el contenido del
+comando anterior (primer frame no limpiaba).
+
+*Arreglo:* =MoveTo(0,0) + Clear(All)= justo tras =EnterAlternateScreen=.
+Sólo =2J= (no =3J=) para no destruir el *scrollback* de los emuladores.
+
+** 1.4 Avisos del kernel encima de la interfaz (mitigado)
+
+Ver sección [[*4. Avisos del kernel (printk): explicación completa][4]] para el detalle completo. Doble vía:
+
+- =lower_kernel_printk()=: si se detecta consola real (=running_on_vt()==
+  =/dev/ttyN= en fd 0/1/2) y hay permisos, escribe =1= en
+  /=proc/=sys/=kernel/=printk= y *restaura el valor original al salir*.
+- *Auto-sanado*: sin permisos, cada 2 s se fuerza un repaint completo de
+  todas las celdas (=force_full=) para borrar lo que el kernel haya pintado
+  encima — sin =Clear=, sin parpadeo (sólo reescritura de celdas).
+- Si no hay permisos, el status muestra el hint: =sudo dmesg -n 1=.
+
+** 1.5 La ayuda se cierra con la misma tecla que la abre (arreglado)
+
+=F1= y =?= abrían la ayuda pero sólo =Esc= / =q= la cerraban; pulsar =F1=
+de nuevo no hacía nada. Ahora =F1= y =?= alternan.
+
+* 2. Entregado en esta fase: menú de programas (fase 2)
+
+** 2.1 Qué hace
+
+=Ctrl+P= / =Alt+P= abre un menú flotante con los programas instalados en el
+PATH (=htop=, =btop=, =glances=, =ncdu=, =ranger=, =gitui=, =tmux=,
+=less=, …). =j=/=k= o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
+
+- El programa corre *sobre su propio PTY* ocupando el área del editor.
+- Se dibuja con un *emulador VT100* integrado (rejilla de celdas): colores
+  256 y truecolor, pantalla alterna (=ESC[?1049=), región de scroll, SGR,
+  DECCKM (flechas en modo aplicación), wrap diferido xenl, respuestas
+  DSR/DA al programa.
+- *Cesión de teclas*: en modo PROG sólo =Ctrl/Alt+Q= (salir), =Ctrl/Alt+S=
+  (guardar el fichero), =Ctrl/Alt+P= (menú), =Ctrl/Alt+G= (cerrar) y
+  =Shift+Tab= (saltar al shell y volver) son de pigmacs; el resto va al
+  programa. El menú también se abre *encima* de un programa en marcha.
+- El PTY se redimensiona solo con la terminal, con el borde editor/shell y
+  con abrir/cerrar el tree.
+- Si el programa termina solo, pigmacs vuelve al editor y lo indica en el
+  status; =Ctrl+G= mata el programa sin dejar zombies ni huérfanos.
+
+** 2.2 Cómo está hecho (arquitectura)
+
+- =struct Term=: parser VT100 por máquina de estados (=PState=) con búfer
+  para secuencias a medias; estados completos de cursor, estilo, región de
+  scroll, pantalla alterna y =reply= (respuestas pendientes hacia el PTY).
+- =struct Program=: =name=, writer, master, child, =output= (hilo lector) y
+  =term=. El bucle principal vuelca =output= al emulador, escribe los
+  =reply= pendientes y detecta la muerte del hijo con =try_wait()=.
+- En modo PROG, teclas → =key_bytes_mode(k, term.app_cursor)= (respeta
+  DECCKM) → PTY.
+
+* 3. Mejoras propuestas (priorizadas)
+
+** TODO [#A] Coloreado de código Python y otros lenguajes
+
+*Problema:* los bloques =#+BEGIN_SRC= se pintan hoy de *gris plano*
+(metadata magenta, delimitadores gris); el contenido no tiene resaltado
+sintáctico. Para el uso principal de =pigmacs= (escribir org con código
+dentro) es la mejora de legibilidad con más relación coste/beneficio.
+
+*Propuesta:* resaltado por lenguaje sobre las líneas visibles, sin parser
+externo (regex por línea + estado de bloque multi-línea para cadenas):
+
+| lenguaje   | qué resaltar                                        |
+|------------+-----------------------------------------------------|
+| python     | keywords, =def=/=class=, builtins, decoradores @,   |
+|            | cadenas/f-strings, comentarios, números, tipos      |
+| bash/sh    | comandos al inicio, flags =-x=, cadenas, comentarios |
+| rust       | keywords, macros !=, lifetimes ='a, tipos, cadenas  |
+| c/cpp      | preprocessor, keywords, cadenas, comentarios        |
+| js/ts      | keywords, funciones, cadenas/tmpl, comentarios      |
+| cualquier  | fallback: números, cadenas, comentarios             |
+
+- *Dónde:* nuevo =src_colorize()= llamado desde =draw_editor_lines= sólo
+  para las filas visibles (~50); coste por frame despreciable.
+- *Riesgo:* bajo. No toca el buffer, sólo estilos de pintado.
+- *Esfuerzo:* mediano (1 sesión): 1 sesión de tablas + integración con los
+  estilos org existentes (cabeceras cyan/verde/amarillo, TODO rojo…).
+
+** TODO [#A] Entrada libre en el menú de programas (fuzzy)
+
+*Problema:* el menú sólo ofrece la lista fija =MENU=. Si el programa no
+está en esa lista (p. ej. =watch=, =yazi=, =iotop=) no hay forma de
+lanzarlo.
+
+*Propuesta:* al abrir =Ctrl+P=, empezar a teclear *filtra* las entradas
+(sustring difuso: =htp= → =htop=); si no hay coincidencias y se pulsa
+=Enter=, lanzar lo tecleado *tal cual* como comando (con su PATH y argumentos
+simples). =Esc= limpia/cierra.
+
+- *Riesgo:* bajo (ya existe el menú modal; se añade un campo de texto).
+- *Esfuerzo:* pequeño.
+
+** TODO [#B] Fichero de configuración
+
+*Problema:* atajos, colores y tamaño del panel shell están fijos en el
+código. Otros usuarios querrán otras teclas u otros programas en el menú.
+
+*Propuesta:* =~/.config/pigmacs/config.toml= (lectura tolerante a fallos:
+si no existe o hay un error, se usan los valores por defecto):
+
+#+BEGIN_SRC toml
+[shortcuts]
+menu = "p"          # Ctrl/Alt+<letra>
+close_program = "g"
+# ...
+
+[menu]
+entries = ["htop", "btop", "ncdu", "ranger", "gitui", "tmux", "less", "watch"]
+
+[ui]
+shell_rows = 9      # filas por defecto del panel terminal
+scroll_follow = 0.75
+#+END_SRC
+
+- *Riesgo:* bajo-medium (validar claves desconocidas sin romper).
+- *Esfuerzo:* mediano. Requiere añadir =toml= a las dependencias.
+
+** TODO [#B] Pegado seguro (bracketed paste)
+
+*Problema:* pegar varias líneas desde el portapapeles en el shell las
+ejecuta tal cual (readline las trata como entradas; =Ctrl+Shift+V= de la
+terminal emite el texto a pelo). Un pegado accidental puede ejecutar un
+comando destructivo.
+
+*Propuesta:* activar =ESC[?2004h= en el shell y envolver los pegados con
+=ESC[200~…ESC[201~=; readline (y bash ≥ 5) los recibe como *una* entrada sin
+ejecutar. Hoy =pigmacs= ya parsea =ESC[?2004h= sin romper.
+
+- *Riesgo:* bajo (fases de =ESC[200~=/=ESC[201~= en el parser del shell).
+- *Esfuerzo:* pequeño.
+
+** TODO [#B] Rueda del ratón en los paneles
+
+*Propuesta:* =EnableMouseCapture= + resolver eventos por panel: rueda
+arriba/abajo → scroll del editor, del shell (=ESC[A=/$=ESC[B= para que
+readline/subir en la terminal) y del tree. Clic en el tree abre el fichero.
+
+- *Riesgo:* medium — el ratón "roba" la selección nativa de la terminal;
+  conviene un ajuste (=scroll sin mantener Shift=) o activarlo opcional.
+- *Esfuerzo:* mediano.
+
+** TODO [#C] Aviso de fin de la IA (bell / cambio de color)
+
+Si la consulta a =opencode= tarda, no hay forma de saber cuándo terminó sin
+mirar. Propuesta: =ESC[7= (bell) al terminar + el label del panel en
+verde/rojo según estado, ya visible en la barra de ayuda.
+
+- *Riesgo:* nulo · *Esfuerzo:* mínimo.
+
+** TODO [#C] Copiar con OSC 52
+
+=ESC]52;c;<base64>= copia al portapapeles del sistema desde *cualquier*
+entorno que lo soporte (incluidas terminales remotas), resolviendo el
+"no hay portapapeles en la VT". Atajo nuevo en modo VISUAL y en la IA
+(selección de la respuesta).
+
+- *Riesgo:* bajo · *Esfuerzo:* pequeño.
+
+** TODO [#C] Líneas largas: soft-wrap opcional
+
+Hoy la línea se trunca con scroll horizontal. Opción =wrap= en la
+configuración: dibujar la línea continuada en la fila siguiente (con
+indicador =↳=), sin tocar el buffer.
+
+- *Riesgo:* medium (afecta al cálculo de filas visibles y al fold).
+- *Esfuerzo:* mediano-alto.
+
+** TODO [#C] Sesión y restauración
+
+Recordar =shell_rows=, posición del cursor, tree marcado (★) y programa en
+marcha en un =.pigmacs.session= por directorio. Arrancar con =--resume= lo
+restaura.
+
+- *Riesgo:* bajo · *Esfuerzo:* mediano.
+
+* 4. Avisos del kernel (printk): explicación completa
+
+** Qué son
+
+El kernel tiene un sistema propio de mensajes (=printk=) con niveles
+(0 emergencia … 7 debug). Cuando el *nivel del mensaje* ≥ =console_loglevel=
+configurado, el mensaje se vuelca *directamente a la consola activa* — es
+decir, a la misma =/dev/ttyN= donde está dibujándose =pigmacs=. El kernel no
+"pinta" sobre el programa con su permiso: escribe a la tty como haría
+cualquier otro proceso con más privilegios.
+
+Mensajes típicos que interrumpen una TUI: avisos de drivers (USB, wifi,
+ACPI), =systemd-oomd=, problemas de filesystem, o cualquier programa que
+escriba en =/dev/kmsg=. *No son errores de =pigmacs=*: el programa funciona
+bien; sólo que el kernel pinta encima.
+
+** Por qué a otros usuarios les aparecen y a ti no
+
+Tú tienes la consola silenciada (==dmesg -n 1= o un sysctl equivalente), así
+que nunca ves el fenómeno. En una instalación por defecto
+(=console_loglevel= típico =7= o =4=) *sí* aparecen.
+
+** Qué hace pigmacs (doble vía)
+
+1. *Bajar el nivel si hay permisos* — al arrancar en una VT real
+   (detecta =/dev/tty<digits>= en fd 0/1/2):
+   - lee el valor actual de =/=proc/=sys/=kernel/=printk=;
+   - escribe =1= (sólo emergencias);
+   - *lo restaura exactamente al salir* (incluso con =Ctrl+C=, porque la
+     restauración está en el mismo sitio donde se restaura la terminal).
+   Se hace "best effort": si no hay permisos (arrancado sin root), sigue
+   adelante sin que nada falle.
+2. *Auto-sanado* — cada 2 s en VT real se fuerza un repaint completo del
+   frame: todas las celdas se reescriben *sin*= Clear= (sin parpadeo),
+   con lo que cualquier mensaje del kernel que se haya colado desaparece en
+   menos de 2 segundos. En tmux/pty (donde el kernel no escribe) este
+   repaint *no se activa*, para no malgastar CPU.
+3. *Transparencia* — si no hubo permisos, la barra de estado muestra:
+   =kernel.printk sin permisos · «sudo dmesg -n 1» evita los avisos del kernel=.
+
+** Recomendación permanente (para otros usuarios)
+
+#+BEGIN_SRC bash
+sudo dmesg -n 1            # efecto inmediato, hasta el próximo arranque
+# o persistente:
+echo "kernel.printk = 1 4 1 7" | sudo tee /etc/sysctl.d/50-pigmacs.conf
+sudo sysctl --system
+#+END_SRC
+
+Con =pigmacs= arrancado como root no hace falta nada de esto: el programa
+baja y restaura el nivel solo.
+
+* 5. Cómo verificarlo
+
+Tres suites en Python (sin dependencias, sólo stdlib) que arrancan el binario
+en un PTY con =TIOCSWINSZ=, envían teclas y *reconstruyen la pantalla con un
+mini-emulador VT100= (CUP/EL/ED/CR/LF) — necesario porque el renderer pinta
+*sólo las celdas cambiadas* (diff por celdas).
+
+| suite         | qué cubre                                              | checks |
+|---------------+--------------------------------------------------------+--------|
+| =test_partA.py= | limpieza al arrancar · Delete/Ctrl+U/Backspace sin fantasmas · salir | 6 |
+| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree, IA, borde, ayuda F1/?/Esc, shell, grupo Alt | 34 |
+| =test_fase2.py= | menú, navegar, lanzar htop, cesión de teclas, Shift+Tab, resize, Ctrl/G+Alt+G, huérfanos, fichero intacto | 29 |
+
+Uso (desde la raíz del repo):
+
+#+BEGIN_SRC bash
+cargo build
+python3 tests/test_partA.py && python3 tests/smoke_fase1.py && python3 tests/test_fase2.py
+#+END_SRC
+
+Estado: *69/69 en verde*.
+
+* 6. Estado de los commits
+
+- Fase 1 (atajos dos grupos): *commiteada* — =ae18ae7=.
+- Arreglos 1.2–1.5, fase 2 y este informe: *pendientes de tu OK* (también el
+  README actualizado y las suites de tests).
