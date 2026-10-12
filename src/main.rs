@@ -19,7 +19,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -30,6 +30,7 @@ enum Mode {
     Shell,
     Ai,
     Browser,
+    Program, // programa lanzado desde el menú (Ctrl+P), con su propio PTY
 }
 
 struct Shell {
@@ -48,6 +49,675 @@ impl Shell {
             pixel_width: 0,
             pixel_height: 0,
         });
+    }
+}
+
+// ————— programa lanzado en la ventana principal (menú Ctrl+P) —————
+
+/// programas disponibles en el menú (se comprueba el PATH al dibujarlo)
+const MENU: [&str; 8] = [
+    "htop", "btop", "glances", "ncdu", "ranger", "gitui", "tmux", "less",
+];
+
+/// ¿está el programa en el PATH y es ejecutable?
+fn in_path(name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    let Ok(path) = env::var("PATH") else { return false };
+    path.split(':').any(|d| {
+        !d.is_empty()
+            && fs::metadata(std::path::Path::new(d).join(name))
+                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+                .unwrap_or(false)
+    })
+}
+
+/// estado del parser del emulador VT100
+#[derive(PartialEq)]
+enum PState {
+    Normal,
+    Esc,
+    Csi,
+    Osc,
+    OscEsc,
+    Dcs,
+    DcsEsc,
+    Skip, // ESC ( ) * + # o ESC SP: se traga el byte siguiente
+}
+
+/// emulador VT100 para el programa de la ventana principal: suficiente para
+/// TUIs (htop, ranger…) — CSI/OSC/SGR, región de scroll, pantalla alterna,
+/// wrap diferido y respuestas DSR/DA a lo que el programa pregunte
+struct Term {
+    w: u16,
+    h: u16,
+    grid: Vec<Vec<Cell>>, // todas las filas con el ancho completo
+    x: usize,
+    y: usize,
+    top: usize, // región de scroll (inclusive)
+    bot: usize,
+    st: Style,         // estilo SGR activo
+    wrap: bool,        // auto-wrap (DEC, activo por defecto)
+    pending_wrap: bool, // wrap diferido como en xterm (xenl)
+    app_cursor: bool,  // DECCKM: flechas en modo aplicación (SS3)
+    cursor_visible: bool,
+    saved: Option<(usize, usize, Style)>,
+    alt: Option<(Vec<Vec<Cell>>, usize, usize, Style)>,
+    last_ch: char,    // para REP (ESC[b)
+    reply: Vec<u8>,   // respuestas (DSR/DA) pendientes de escribir al PTY
+    buf: Vec<u8>,     // bytes recibidos aún sin procesar (secuencia a medias)
+    state: PState,
+    csi: String,
+}
+
+impl Term {
+    fn new(w: u16, h: u16) -> Self {
+        Term {
+            w,
+            h,
+            grid: vec![vec![Cell::default(); w as usize]; h as usize],
+            x: 0,
+            y: 0,
+            top: 0,
+            bot: h.saturating_sub(1) as usize,
+            st: Style::default(),
+            wrap: true,
+            pending_wrap: false,
+            app_cursor: false,
+            cursor_visible: true,
+            saved: None,
+            alt: None,
+            last_ch: ' ',
+            reply: Vec::new(),
+            buf: Vec::new(),
+            state: PState::Normal,
+            csi: String::new(),
+        }
+    }
+
+    fn resize(&mut self, w: u16, h: u16) {
+        self.w = w;
+        self.h = h;
+        self.grid = vec![vec![Cell::default(); w as usize]; h as usize];
+        self.x = self.x.min(w.saturating_sub(1) as usize);
+        self.y = self.y.min(h.saturating_sub(1) as usize);
+        self.top = 0;
+        self.bot = h.saturating_sub(1) as usize;
+        self.pending_wrap = false;
+        self.alt = None; // el programa repinta solo tras el SIGWINCH
+    }
+
+    /// añade bytes al búfer interno y procesa todo lo que se pueda
+    fn feed(&mut self, data: &[u8]) {
+        self.buf.extend_from_slice(data);
+        self.parse();
+    }
+
+    fn parse(&mut self) {
+        let len = self.buf.len();
+        let mut i = 0usize;
+        while i < len {
+            let b = self.buf[i];
+            match self.state {
+                PState::Normal => {
+                    if b == 0x1b {
+                        self.state = PState::Esc;
+                        i += 1;
+                    } else if b < 0x20 {
+                        self.ctrl(b);
+                        i += 1;
+                    } else if b < 0x80 {
+                        self.put_char(b as char);
+                        i += 1;
+                    } else {
+                        // UTF-8 multibyte (si el trozo está corto, se espera)
+                        let need = if b >= 0xf0 {
+                            4
+                        } else if b >= 0xe0 {
+                            3
+                        } else if b >= 0xc2 {
+                            2
+                        } else {
+                            1
+                        };
+                        if i + need > len {
+                            break;
+                        }
+                        let ch = std::str::from_utf8(&self.buf[i..i + need])
+                            .ok()
+                            .and_then(|s| s.chars().next());
+                        match ch {
+                            Some(c) => {
+                                self.put_char(c);
+                                i += need;
+                            }
+                            None => {
+                                self.put_char('\u{fffd}');
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+                PState::Esc => {
+                    self.pending_wrap = false;
+                    match b {
+                        b'[' => {
+                            self.state = PState::Csi;
+                            self.csi.clear();
+                        }
+                        b']' => self.state = PState::Osc,
+                        b'P' => self.state = PState::Dcs,
+                        b'7' => {
+                            self.save_cursor();
+                            self.state = PState::Normal;
+                        }
+                        b'8' => {
+                            self.restore_cursor();
+                            self.state = PState::Normal;
+                        }
+                        b'D' => {
+                            self.line_feed();
+                            self.state = PState::Normal;
+                        }
+                        b'E' => {
+                            self.x = 0;
+                            self.line_feed();
+                            self.state = PState::Normal;
+                        }
+                        b'M' => {
+                            self.reverse_index();
+                            self.state = PState::Normal;
+                        }
+                        b'c' => {
+                            self.reset();
+                            self.state = PState::Normal;
+                        }
+                        b'(' | b')' | b'*' | b'+' | b'#' | b' ' => {
+                            self.state = PState::Skip;
+                        }
+                        0x1b => {} // ESC ESC: mantenerse en Esc
+                        _ => self.state = PState::Normal,
+                    }
+                    i += 1;
+                }
+                PState::Skip => {
+                    self.state = PState::Normal;
+                    i += 1;
+                }
+                PState::Csi => {
+                    if (0x40..=0x7e).contains(&b) {
+                        let params = std::mem::take(&mut self.csi);
+                        self.state = PState::Normal;
+                        self.csi_final(&params, b as char);
+                    } else if self.csi.len() < 64 {
+                        self.csi.push(b as char);
+                    } else {
+                        // secuencia de basura: abandonar
+                        self.state = PState::Normal;
+                        self.csi.clear();
+                    }
+                    i += 1;
+                }
+                PState::Osc => {
+                    match b {
+                        0x07 => self.state = PState::Normal,
+                        0x1b => self.state = PState::OscEsc,
+                        _ => {} // título de ventana: se ignora
+                    }
+                    i += 1;
+                }
+                PState::OscEsc => {
+                    self.state = PState::Normal;
+                    i += 1;
+                }
+                PState::Dcs => {
+                    if b == 0x1b {
+                        self.state = PState::DcsEsc;
+                    }
+                    i += 1;
+                }
+                PState::DcsEsc => {
+                    self.state = if b == b'\\' {
+                        PState::Normal
+                    } else if b == 0x1b {
+                        PState::DcsEsc
+                    } else {
+                        PState::Dcs
+                    };
+                    i += 1;
+                }
+            }
+        }
+        // queda un remanente sin terminar: conservarlo para el próximo feed
+        self.buf.drain(..i);
+    }
+
+    /// bytes de control imprimibles-directos
+    fn ctrl(&mut self, b: u8) {
+        match b {
+            b'\r' => {
+                self.x = 0;
+                self.pending_wrap = false;
+            }
+            b'\n' | 0x0b | 0x0c => self.line_feed(),
+            0x08 => {
+                self.x = self.x.saturating_sub(1);
+                self.pending_wrap = false;
+            }
+            b'\t' => {
+                let nx = ((self.x / 8) + 1) * 8;
+                self.x = nx.min(self.w.saturating_sub(1) as usize);
+                self.pending_wrap = false;
+            }
+            _ => {} // BEL y demás: sin efecto
+        }
+    }
+
+    fn line_feed(&mut self) {
+        self.pending_wrap = false;
+        if self.y == self.bot {
+            self.scroll_up(1);
+        } else if self.y + 1 < self.h as usize {
+            self.y += 1;
+        }
+    }
+
+    fn reverse_index(&mut self) {
+        self.pending_wrap = false;
+        if self.y == self.top {
+            self.scroll_down(1);
+        } else {
+            self.y = self.y.saturating_sub(1);
+        }
+    }
+
+    fn scroll_up(&mut self, n: usize) {
+        let region = (self.bot - self.top + 1).min(self.h as usize);
+        for _ in 0..n.min(region) {
+            self.grid.remove(self.top);
+            self.grid
+                .insert(self.bot, vec![Cell::default(); self.w as usize]);
+        }
+    }
+
+    fn scroll_down(&mut self, n: usize) {
+        let region = (self.bot - self.top + 1).min(self.h as usize);
+        for _ in 0..n.min(region) {
+            self.grid.remove(self.bot);
+            self.grid
+                .insert(self.top, vec![Cell::default(); self.w as usize]);
+        }
+    }
+
+    fn put_char(&mut self, c: char) {
+        if self.pending_wrap {
+            // wrap diferido: el salto ocurre antes del siguiente carácter
+            self.pending_wrap = false;
+            self.x = 0;
+            self.line_feed();
+        }
+        if self.y >= self.grid.len() || self.x >= self.w as usize {
+            return;
+        }
+        self.grid[self.y][self.x] = Cell { ch: c, st: self.st };
+        self.last_ch = c;
+        if self.x + 1 < self.w as usize {
+            self.x += 1;
+        } else if self.wrap {
+            self.pending_wrap = true;
+        }
+    }
+
+    fn save_cursor(&mut self) {
+        self.saved = Some((self.x, self.y, self.st));
+    }
+
+    fn restore_cursor(&mut self) {
+        if let Some((x, y, st)) = self.saved {
+            self.x = x.min(self.w.saturating_sub(1) as usize);
+            self.y = y.min(self.h.saturating_sub(1) as usize);
+            self.st = st;
+        }
+        self.pending_wrap = false;
+    }
+
+    fn reset(&mut self) {
+        self.grid = vec![vec![Cell::default(); self.w as usize]; self.h as usize];
+        self.x = 0;
+        self.y = 0;
+        self.top = 0;
+        self.bot = self.h.saturating_sub(1) as usize;
+        self.st = Style::default();
+        self.wrap = true;
+        self.pending_wrap = false;
+        self.app_cursor = false;
+        self.cursor_visible = true;
+        self.saved = None;
+        self.alt = None;
+    }
+
+    fn alt_screen(&mut self, on: bool) {
+        if on && self.alt.is_none() {
+            let grid = std::mem::replace(
+                &mut self.grid,
+                vec![vec![Cell::default(); self.w as usize]; self.h as usize],
+            );
+            self.alt = Some((grid, self.x, self.y, self.st));
+            self.x = 0;
+            self.y = 0;
+        } else if !on {
+            if let Some((grid, x, y, st)) = self.alt.take() {
+                self.grid = grid;
+                self.x = x.min(self.w.saturating_sub(1) as usize);
+                self.y = y.min(self.h.saturating_sub(1) as usize);
+                self.st = st;
+            }
+        }
+        self.pending_wrap = false;
+    }
+
+    fn set_mode(&mut self, n: usize, on: bool) {
+        match n {
+            1 => self.app_cursor = on,
+            7 => self.wrap = on,
+            25 => self.cursor_visible = on,
+            47 | 1047 | 1049 => self.alt_screen(on),
+            _ => {} // bracketed paste y demás: se ignoran
+        }
+    }
+
+    fn erase_display(&mut self, n: usize) {
+        match n {
+            0 => {
+                if let Some(l) = self.grid.get_mut(self.y) {
+                    if self.x < l.len() {
+                        for c in &mut l[self.x..] {
+                            *c = Cell::default();
+                        }
+                    }
+                }
+                for l in self.grid.iter_mut().skip(self.y + 1) {
+                    for c in l.iter_mut() {
+                        *c = Cell::default();
+                    }
+                }
+            }
+            1 => {
+                for l in self.grid.iter_mut().take(self.y) {
+                    for c in l.iter_mut() {
+                        *c = Cell::default();
+                    }
+                }
+                if let Some(l) = self.grid.get_mut(self.y) {
+                    for c in l.iter_mut().take(self.x + 1) {
+                        *c = Cell::default();
+                    }
+                }
+            }
+            _ => {
+                for l in &mut self.grid {
+                    for c in l.iter_mut() {
+                        *c = Cell::default();
+                    }
+                }
+            }
+        }
+        self.pending_wrap = false;
+    }
+
+    fn erase_line(&mut self, n: usize) {
+        if let Some(l) = self.grid.get_mut(self.y) {
+            match n {
+                0 => {
+                    if self.x < l.len() {
+                        for c in &mut l[self.x..] {
+                            *c = Cell::default();
+                        }
+                    }
+                }
+                1 => {
+                    for c in l.iter_mut().take(self.x + 1) {
+                        *c = Cell::default();
+                    }
+                }
+                _ => {
+                    for c in l.iter_mut() {
+                        *c = Cell::default();
+                    }
+                }
+            }
+        }
+        self.pending_wrap = false;
+    }
+
+    fn insert_lines(&mut self, n: usize) {
+        if self.y < self.top || self.y > self.bot {
+            return;
+        }
+        let n = n.min(self.bot - self.top + 1);
+        for _ in 0..n {
+            self.grid.remove(self.bot);
+            self.grid
+                .insert(self.y, vec![Cell::default(); self.w as usize]);
+        }
+        self.pending_wrap = false;
+    }
+
+    fn delete_lines(&mut self, n: usize) {
+        if self.y < self.top || self.y > self.bot {
+            return;
+        }
+        let n = n.min(self.bot - self.top + 1);
+        for _ in 0..n {
+            self.grid.remove(self.y);
+            self.grid
+                .insert(self.bot, vec![Cell::default(); self.w as usize]);
+        }
+        self.pending_wrap = false;
+    }
+
+    fn delete_chars(&mut self, n: usize) {
+        let w = self.w as usize;
+        let n = n.min(w.saturating_sub(self.x));
+        let end = self.x + n;
+        if let Some(l) = self.grid.get_mut(self.y) {
+            if self.x < l.len() {
+                l.drain(self.x..end.min(l.len()));
+            }
+            while l.len() < w {
+                l.push(Cell::default());
+            }
+        }
+        self.pending_wrap = false;
+    }
+
+    fn insert_chars(&mut self, n: usize) {
+        let w = self.w as usize;
+        let n = n.min(w.saturating_sub(self.x));
+        if let Some(l) = self.grid.get_mut(self.y) {
+            for _ in 0..n {
+                l.insert(self.x, Cell::default());
+                l.pop();
+            }
+        }
+        self.pending_wrap = false;
+    }
+
+    fn erase_chars(&mut self, n: usize) {
+        let end = self.x + n;
+        if let Some(l) = self.grid.get_mut(self.y) {
+            let lim = end.min(l.len());
+            if self.x < lim {
+                for c in &mut l[self.x..lim] {
+                    *c = Cell::default();
+                }
+            }
+        }
+        self.pending_wrap = false;
+    }
+
+    /// dispatch de la secuencia CSI final (params = texto entre ESC[ y el final)
+    fn csi_final(&mut self, params: &str, fin: char) {
+        // una secuencia de posición/obborrado cancela el wrap pendiente
+        if !matches!(fin, 'm' | 'n' | 'c' | 't' | 'b' | 'h' | 'l' | 'q' | 'g') {
+            self.pending_wrap = false;
+        }
+        let is_priv = params.starts_with('?');
+        let ps: Vec<usize> = params
+            .trim_start_matches(['?', '>', '<', '!', ' '])
+            .split(';')
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        // por defecto: 1 para A/B/C… («uno»), 0 para J/K («desde aquí»)
+        let n1 = ps.first().copied().unwrap_or(1);
+        let n0 = ps.first().copied().unwrap_or(0);
+        let max_x = self.w.saturating_sub(1) as usize;
+        let max_y = self.h.saturating_sub(1) as usize;
+        match fin {
+            'm' => {
+                self.st = if params.is_empty() {
+                    Style::default()
+                } else {
+                    parse_sgr(params, self.st)
+                };
+            }
+            'A' => self.y = self.y.saturating_sub(n1).max(self.top),
+            'B' => self.y = (self.y + n1).min(self.bot),
+            'C' => self.x = (self.x + n1).min(max_x),
+            'D' => self.x = self.x.saturating_sub(n1),
+            'E' => {
+                self.x = 0;
+                self.y = (self.y + n1).min(self.bot);
+            }
+            'F' => {
+                self.x = 0;
+                self.y = self.y.saturating_sub(n1).max(self.top);
+            }
+            'G' | '`' => self.x = (n1.max(1) - 1).min(max_x),
+            'H' | 'f' => {
+                let row = ps.first().copied().unwrap_or(1).max(1) - 1;
+                let col = ps.get(1).copied().unwrap_or(1).max(1) - 1;
+                self.y = row.min(max_y);
+                self.x = col.min(max_x);
+            }
+            'd' => self.y = (n1.max(1) - 1).min(max_y),
+            'J' => self.erase_display(n0),
+            'K' => self.erase_line(n0),
+            'L' => self.insert_lines(n1),
+            'M' => self.delete_lines(n1),
+            'P' => self.delete_chars(n1),
+            '@' => self.insert_chars(n1),
+            'X' => self.erase_chars(n1),
+            'S' => self.scroll_up(n1),
+            'T' => self.scroll_down(n1),
+            'r' => {
+                let top = ps.first().copied().unwrap_or(1).max(1) - 1;
+                let bot = ps
+                    .get(1)
+                    .copied()
+                    .unwrap_or(self.h as usize)
+                    .max(1)
+                    .min(self.h as usize)
+                    - 1;
+                self.top = top.min(bot);
+                self.bot = bot;
+                self.x = 0;
+                self.y = 0;
+            }
+            's' => self.save_cursor(),
+            'u' => self.restore_cursor(),
+            'h' if is_priv => self.set_mode(n0, true),
+            'l' if is_priv => self.set_mode(n0, false),
+            'n' if !is_priv => {
+                if n0 == 6 {
+                    let x = self.x + 1;
+                    let y = self.y + 1;
+                    self.reply.extend_from_slice(format!("\x1b[{y};{x}R").as_bytes());
+                } else if n0 == 5 {
+                    self.reply.extend_from_slice(b"\x1b[0n");
+                }
+            }
+            'c' => {
+                if params.starts_with('>') {
+                    self.reply.extend_from_slice(b"\x1b[>0;10;1c");
+                } else {
+                    self.reply.extend_from_slice(b"\x1b[?6c");
+                }
+            }
+            't' if !is_priv && n0 == 18 => {
+                let w = self.w;
+                let h = self.h;
+                self.reply.extend_from_slice(format!("\x1b[8;{h};{w}t").as_bytes());
+            }
+            'b' => {
+                // REP: repetir el último carácter
+                let c = self.last_ch;
+                for _ in 0..n1 {
+                    self.put_char(c);
+                }
+            }
+            'Z' => {
+                self.x = if self.x % 8 == 0 {
+                    self.x.saturating_sub(8)
+                } else {
+                    (self.x / 8) * 8
+                };
+            }
+            _ => {} // cursor style, tabs…: sin efecto
+        }
+    }
+
+    /// pinta la rejilla en el frame
+    fn draw(&self, fr: &mut Frame, bx: u16, rows: u16) {
+        for y in 0..(self.h as usize).min(rows as usize) {
+            for x in 0..self.w as usize {
+                let c = self.grid[y][x];
+                fr.put(bx + x as u16, y as u16, c.ch, c.st);
+            }
+        }
+    }
+}
+
+/// programa en ejecución sobre su propio PTY, dibujado en el área del editor
+struct Program {
+    name: String,
+    writer: Box<dyn Write + Send>,
+    // se conservan a propósito: mantienen el PTY abierto y al hijo vivo
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn Child + Send>,
+    output: Arc<Mutex<Vec<u8>>>,
+    term: Term,
+}
+
+impl Program {
+    fn resize(&mut self, rows: u16, cols: u16) {
+        if self.term.w == cols && self.term.h == rows {
+            return;
+        }
+        let _ = self.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+        self.term.resize(cols, rows);
+    }
+
+    /// tecla pulsada → bytes hacia el programa (respeta DECCKM/modo app)
+    fn send_key(&mut self, k: KeyEvent) -> Result<()> {
+        let b = key_bytes_mode(k, self.term.app_cursor);
+        if !b.is_empty() {
+            self.writer.write_all(&b)?;
+            self.writer.flush()?;
+        }
+        Ok(())
+    }
+
+    /// `Some(descripción)` si el programa ya terminó
+    fn exited(&mut self) -> Option<String> {
+        match self.child.try_wait() {
+            Ok(Some(st)) => Some(format!("{st:?}")),
+            _ => None,
+        }
     }
 }
 
@@ -174,6 +844,13 @@ struct App {
     // ventana de ayuda
     help_open: bool,
     help_scroll: usize,
+    // programas lanzados desde el menú (Ctrl+P)
+    program: Option<Program>,
+    menu_open: bool,
+    menu_cursor: usize,
+    // consola de texto real (/dev/ttyN): saneado de avisos del kernel
+    vt_mode: bool,
+    force_full: bool, // repintar todas las celdas en el próximo draw
 }
 
 impl App {
@@ -1063,6 +1740,9 @@ fn main() -> Result<()> {
     };
     browser.refresh();
 
+    let vt_mode = running_on_vt();
+    let printk_restore = if vt_mode { lower_kernel_printk() } else { None };
+
     let mut app = App {
         path,
         lines,
@@ -1113,6 +1793,11 @@ fn main() -> Result<()> {
         bookmarks: Vec::new(),
         help_open: false,
         help_scroll: 0,
+        program: None,
+        menu_open: false,
+        menu_cursor: 0,
+        vt_mode,
+        force_full: false,
     };
 
     // abrir el fichero inicial con todos los headers plegados
@@ -1122,11 +1807,32 @@ fn main() -> Result<()> {
         }
     }
 
+    // aviso del kernel en consolas de texto: si no se puede bajar el nivel
+    // de consola, se repinta la pantalla cada 2 s (run()) para borrarlos
+    if vt_mode && printk_restore.is_none() {
+        app.status =
+            "kernel.printk sin permisos · «sudo dmesg -n 1» evita los avisos del kernel".into();
+    }
+
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen, Hide)?;
+    // limpiar la terminal antes de arrancar: en una consola de texto (ttyN)
+    // lo que hubiera en pantalla se quedaba encima de pigmacs (en las
+    // terminales con pantalla alterna no se nota, pero tampoco hace daño)
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        Hide,
+        MoveTo(0, 0),
+        Clear(ClearType::All)
+    )?;
     let result = run(&mut app);
     execute!(io::stdout(), Show, LeaveAlternateScreen)?;
     terminal::disable_raw_mode()?;
+
+    // restaurar el nivel de consola del kernel que había antes
+    if let Some(orig) = printk_restore {
+        let _ = fs::write("/proc/sys/kernel/printk", format!("{orig}\n"));
+    }
 
     // matar la IA si quedó corriendo
     if let Some(mut c) = app.ai_child.lock().unwrap().take() {
@@ -1138,6 +1844,33 @@ fn main() -> Result<()> {
 
 fn browser_width(w: u16) -> u16 {
     (w / 4).clamp(24, 40)
+}
+
+/// ¿estamos en una consola de texto real (/dev/tty1…) y no en pts (tmux,
+/// xterm, ssh)? El printk del kernel sólo se pinta en la consola de texto.
+fn running_on_vt() -> bool {
+    for fd in ["0", "1", "2"] {
+        if let Ok(t) = fs::read_link(format!("/proc/self/fd/{fd}")) {
+            let s = t.to_string_lossy();
+            if let Some(rest) = s.strip_prefix("/dev/tty") {
+                if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// baja el nivel de mensajes que el kernel pinta en la consola de texto
+/// (sólo hace falta permiso; como usuario normal falla y se ignora).
+/// Devuelve el valor original para restaurarlo al salir. Los mensajes
+/// siguen quedando en el búfer: sólo dejan de pintarse en pantalla.
+fn lower_kernel_printk() -> Option<String> {
+    let orig = fs::read_to_string("/proc/sys/kernel/printk").ok()?;
+    let first = orig.split_whitespace().next()?.to_string();
+    fs::write("/proc/sys/kernel/printk", "1\n").ok()?;
+    Some(first)
 }
 
 /// ¿se puede escribir en esta ruta? (para detectar ficheros de root)
@@ -1163,8 +1896,50 @@ fn run(app: &mut App) -> Result<()> {
     app.redraw = true;
     let mut last_shell_len = 0usize;
     let mut last_ai_len = 0usize;
+    let mut last_heal = Instant::now();
     loop {
         app.ai_flush();
+        // programa de la ventana principal: volcar su salida al emulador,
+        // responder a lo que pregunte (DSR/DA) y detectar si ha terminado
+        if let Some(p) = app.program.as_mut() {
+            let chunk = {
+                let mut o = p.output.lock().unwrap();
+                if o.is_empty() {
+                    None
+                } else {
+                    Some(std::mem::take(&mut *o))
+                }
+            };
+            if let Some(v) = chunk {
+                p.term.feed(&v);
+                app.redraw = true;
+            }
+            if !p.term.reply.is_empty() {
+                let r = std::mem::take(&mut p.term.reply);
+                let _ = p.writer.write_all(&r);
+                let _ = p.writer.flush();
+            }
+            if let Some(st) = p.exited() {
+                let name = p.name.clone();
+                app.program = None;
+                if app.mode == Mode::Program {
+                    app.mode = Mode::Normal;
+                }
+                if app.top_mode == Mode::Program {
+                    app.top_mode = Mode::Normal;
+                }
+                app.status = format!("«{name}» terminó ({st})");
+                app.redraw = true;
+            }
+        }
+        // consola de texto real: el printk del kernel se pinta encima del
+        // programa (no se puede evitar sin permisos); cada 2 s se reescriben
+        // todas las celdas para borrar lo que haya puesto
+        if app.vt_mode && last_heal.elapsed() >= Duration::from_secs(2) {
+            last_heal = Instant::now();
+            app.force_full = true;
+            app.redraw = true;
+        }
         // redibujar solo si algo cambió (teclas, salida del shell, IA, resize):
         // reescribir 50 veces/segundo es lo que hacía parpadear la pantalla
         let shell_len = app.shell.output.lock().unwrap().len();
@@ -1198,6 +1973,11 @@ fn run(app: &mut App) -> Result<()> {
                 // ventana de ayuda: captura todas las teclas
                 if app.help_open {
                     handle_help_key(app, k);
+                    continue;
+                }
+                // menú de programas (Ctrl+P): captura todas las teclas
+                if app.menu_open {
+                    handle_menu_key(app, k);
                     continue;
                 }
                 // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
@@ -1256,6 +2036,42 @@ fn run(app: &mut App) -> Result<()> {
                 }
                 if app.searching {
                     handle_search_key(app, k);
+                    continue;
+                }
+                // ——— programa en la ventana principal ———
+                // solo Q/S/P/G (y F1) siguen siendo de pigmacs; el resto de
+                // teclas ceden al programa (Ctrl+A, Ctrl+F, flechas…)
+                if app.mode == Mode::Program {
+                    if k.code == KeyCode::F(1) {
+                        app.help_open = true;
+                        app.help_scroll = 0;
+                        continue;
+                    }
+                    if let Some(sc) = shortcut_of(k) {
+                        match sc {
+                            Shortcut::Quit
+                            | Shortcut::Save
+                            | Shortcut::Menu
+                            | Shortcut::CloseProgram => {
+                                if let Some(quit) = shortcut(app, sc)? {
+                                    if quit {
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
+                            _ => {} // cede al programa
+                        }
+                    }
+                    if k.code == KeyCode::BackTab {
+                        // Shift+Tab siempre es de pigmacs: salta al shell
+                        app.top_mode = Mode::Program;
+                        app.mode = Mode::Shell;
+                        continue;
+                    }
+                    if let Some(p) = app.program.as_mut() {
+                        p.send_key(k)?;
+                    }
                     continue;
                 }
                 // ——— atajos globales: dos grupos ———
@@ -1350,6 +2166,8 @@ enum Shortcut {
     NewAi,
     BorderUp,
     BorderDown,
+    Menu,         // Ctrl/Alt+P: lanzar un programa en la ventana principal
+    CloseProgram, // Ctrl/Alt+G: cerrar el programa en marcha
 }
 
 /// resuelve un atajo de cualquiera de los dos grupos (Ctrl+letra o Alt+letra)
@@ -1374,6 +2192,8 @@ fn shortcut_of(k: KeyEvent) -> Option<Shortcut> {
         'n' => Shortcut::NewAi,
         'u' => Shortcut::BorderUp,
         'd' => Shortcut::BorderDown,
+        'p' => Shortcut::Menu,
+        'g' => Shortcut::CloseProgram,
         _ => return None,
     })
 }
@@ -1453,6 +2273,17 @@ fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
         Shortcut::BorderUp => resize_border(app, 1)?,
         Shortcut::BorderDown if in_shell => return Ok(None),
         Shortcut::BorderDown => resize_border(app, -1)?,
+        // en el shell ceden a readline (nunca interrumpir un comando)
+        Shortcut::Menu if in_shell => return Ok(None),
+        Shortcut::Menu => app.menu_open = true,
+        Shortcut::CloseProgram if in_shell => return Ok(None),
+        Shortcut::CloseProgram => {
+            if app.program.is_some() {
+                close_program(app);
+            } else {
+                app.status = "No hay programa en ejecución".into();
+            }
+        }
     }
     Ok(Some(false))
 }
@@ -1471,8 +2302,21 @@ fn resize_border(app: &mut App, delta: isize) -> Result<()> {
 /// una tecla pulsada → bytes que espera un programa sobre un PTY
 /// (readline, tmux y cualquier TUI: htop, ranger…)
 fn key_bytes(k: KeyEvent) -> Vec<u8> {
+    key_bytes_mode(k, false)
+}
+
+/// igual que `key_bytes`, pero `app_cursor` (DECCKM) hace que las flechas
+/// viajen como SS3 (ESC O A…) como pide un programa en modo aplicación
+fn key_bytes_mode(k: KeyEvent, app_cursor: bool) -> Vec<u8> {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
     let alt = k.modifiers.contains(KeyModifiers::ALT);
+    let arrow = |csi: &[u8], ss3: &[u8]| -> Vec<u8> {
+        if app_cursor {
+            ss3.to_vec()
+        } else {
+            csi.to_vec()
+        }
+    };
     let mut b: Vec<u8> = match k.code {
         KeyCode::Enter => vec![b'\r'],
         KeyCode::Tab => vec![b'\t'],
@@ -1484,10 +2328,10 @@ fn key_bytes(k: KeyEvent) -> Vec<u8> {
         KeyCode::End => b"\x1b[F".to_vec(),
         KeyCode::PageUp => b"\x1b[5~".to_vec(),
         KeyCode::PageDown => b"\x1b[6~".to_vec(),
-        KeyCode::Up => b"\x1b[A".to_vec(),
-        KeyCode::Down => b"\x1b[B".to_vec(),
-        KeyCode::Right => b"\x1b[C".to_vec(),
-        KeyCode::Left => b"\x1b[D".to_vec(),
+        KeyCode::Up => arrow(b"\x1b[A", b"\x1bOA"),
+        KeyCode::Down => arrow(b"\x1b[B", b"\x1bOB"),
+        KeyCode::Right => arrow(b"\x1b[C", b"\x1bOC"),
+        KeyCode::Left => arrow(b"\x1b[D", b"\x1bOD"),
         KeyCode::F(n) => match n {
             1 => b"\x1bOP".to_vec(),
             2 => b"\x1bOQ".to_vec(),
@@ -1523,6 +2367,143 @@ fn key_bytes(k: KeyEvent) -> Vec<u8> {
     b
 }
 
+// ————— menú de programas (Ctrl/Alt+P) —————
+
+/// programas del menú que están instalados en el PATH
+fn menu_entries() -> Vec<&'static str> {
+    MENU.iter().copied().filter(|m| in_path(m)).collect()
+}
+
+/// lanza `name` sobre su propio PTY ocupando el área del editor
+fn launch_program(app: &mut App, name: &str) -> Result<()> {
+    close_program(app); // si ya había uno, se cierra antes de lanzar otro
+    let (cols, rows) = terminal::size()?;
+    let (editor_rows, _) = layout(rows, app.shell_rows);
+    let bx = if app.browser.active { browser_width(cols) } else { 0 };
+    let cols = cols.saturating_sub(bx).max(2);
+    let rows = editor_rows.max(2);
+
+    let pty = native_pty_system().openpty(PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
+    let mut cmd = CommandBuilder::new(name);
+    cmd.env("TERM", env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()));
+    cmd.cwd(&app.work_dir);
+    let child = pty.slave.spawn_command(cmd)?;
+    let mut reader = pty.master.try_clone_reader()?;
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let output_reader = Arc::clone(&output);
+    thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => output_reader.lock().unwrap().extend_from_slice(&buf[..n]),
+            }
+        }
+    });
+
+    app.program = Some(Program {
+        name: name.into(),
+        writer: pty.master.take_writer()?,
+        master: pty.master,
+        child,
+        output,
+        term: Term::new(cols, rows),
+    });
+    app.mode = Mode::Program;
+    app.status = format!("«{name}» en marcha · Ctrl+G lo cierra");
+    Ok(())
+}
+
+/// cierra el programa en marcha (si lo hay) y vuelve al editor
+fn close_program(app: &mut App) {
+    if let Some(mut p) = app.program.take() {
+        let _ = p.child.kill();
+        let _ = p.child.try_wait(); // no dejar zombies
+    }
+    if app.mode == Mode::Program {
+        app.mode = Mode::Normal;
+    }
+    if app.top_mode == Mode::Program {
+        app.top_mode = Mode::Normal;
+    }
+    app.status = "Programa cerrado".into();
+}
+
+/// teclas del menú: j/k o flechas mueven · Enter lanza · Esc/q cierra
+fn handle_menu_key(app: &mut App, k: KeyEvent) {
+    let entries = menu_entries();
+    match k.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.menu_open = false,
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.menu_cursor = (app.menu_cursor + 1).min(entries.len().saturating_sub(1));
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.menu_cursor = app.menu_cursor.saturating_sub(1);
+        }
+        KeyCode::Enter => {
+            if let Some(&name) = entries.get(app.menu_cursor) {
+                app.menu_open = false;
+                if let Err(e) = launch_program(app, name) {
+                    app.status = format!("No se pudo lanzar {name}: {e}");
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// menú flotante en el centro del área principal
+fn draw_menu(app: &mut App, bx: u16, area_w: u16, rows: u16, fr: &mut Frame) {
+    let entries = menu_entries();
+    let cur = app.menu_cursor.min(entries.len().saturating_sub(1));
+    let mut lines: Vec<String> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, n)| format!("{}{n}", if i == cur { "▸ " } else { "  " }))
+        .collect();
+    if lines.is_empty() {
+        lines.push("sin programas en el PATH".into());
+    }
+    lines.push("Enter lanzar · Esc cierra".into());
+
+    let width = 30u16.min(area_w.saturating_sub(2)).max(10);
+    let height = (lines.len() as u16 + 2).min(rows.saturating_sub(1));
+    let x = bx + area_w.saturating_sub(width) / 2;
+    let y = rows.saturating_sub(height) / 2;
+
+    let bd = Style {
+        fg: Some(Color::DarkGrey),
+        ..Default::default()
+    };
+    let title = " Lanzar programa ";
+    let dashes = width.saturating_sub(2 + title.len() as u16);
+    fr.text(x, y, &format!("┌{title}{}┐", "─".repeat(dashes as usize)), bd);
+    for (i, line) in lines.iter().take(height.saturating_sub(2) as usize).enumerate() {
+        let content: String = line.chars().take(width.saturating_sub(2) as usize).collect();
+        let pad = width.saturating_sub(2).saturating_sub(content.chars().count() as u16);
+        let st = if i == cur && i < entries.len() {
+            Style {
+                reverse: true,
+                ..Default::default()
+            }
+        } else {
+            Style::default()
+        };
+        fr.text(x + 1, y + 1 + i as u16, &format!("{content}{}", " ".repeat(pad as usize)), st);
+    }
+    fr.text(
+        x,
+        y + height.saturating_sub(1),
+        &format!("└{}┘", "─".repeat(width.saturating_sub(2) as usize)),
+        bd,
+    );
+}
+
 const HELP_TEXT: &str = r#"PIGMACS · MANUAL COMPLETO
 ═══════════════════════════
 ATAJOS EN DOS GRUPOS
@@ -1532,6 +2513,8 @@ ATAJOS EN DOS GRUPOS
   en modo SHELL las teclas van al programa de dentro: Ctrl+B (prefijo
   tmux), Ctrl+A/E/K/R (readline) se respetan; solo Ctrl+Q, Ctrl+S,
   Ctrl+Enter y Shift+Tab siguen siendo de pigmacs
+  en modo PROG (programa lanzado con Ctrl+P) sólo Ctrl/Alt+Q, S, P y G
+  son de pigmacs; el resto de teclas ceden al programa en marcha
 
 ACCIONES GLOBALES
   Ctrl+Q / Alt+Q     salir (avisa si hay cambios sin guardar)
@@ -1545,6 +2528,8 @@ ACCIONES GLOBALES
   Ctrl+K / Alt+K     limpiar la pantalla de la terminal
   Ctrl+U / Ctrl+D    subir/bajar el borde (más terminal / más editor)
   Ctrl+N / Alt+N     nueva conversación IA (dentro del panel IA)
+  Ctrl+P / Alt+P     menú para lanzar programas en la ventana principal
+  Ctrl+G / Alt+G     cerrar el programa en marcha
   F1 / ?             esta ayuda
   Shift+←/→/↑/↓      árbol · editor · terminal (grupo gui)
   Ctrl+Shift+↑/↓     mover el borde editor/terminal (grupo gui)
@@ -1593,6 +2578,19 @@ TREE DE FICHEROS
   B                   saltar al siguiente marcador (★ en el título)
   Esc                 volver al editor (el tree sigue visible)
 
+PROGRAMAS EN LA VENTANA PRINCIPAL (Ctrl+P)
+  j k / ↑↓            mover por el menú · Enter lanzar · Esc/q cerrar
+  (sólo aparecen los instalados en el PATH: htop, btop, glances, ncdu,
+   ranger, gitui, tmux, less)
+  el programa corre sobre su propio PTY ocupando el área del editor y
+  se dibuja con un emulador VT100 (colores 256, pantalla alterna…)
+  mientras está activo, sus teclas le ceden salvo Ctrl/Alt+Q (salir),
+  Ctrl/Alt+S (guardar el fichero), Ctrl/Alt+P (menú), Ctrl/Alt+G (cerrar
+  el programa) y Shift+Tab (saltar al shell y volver)
+  si el programa termina solo, pigmacs vuelve al editor y lo indica
+  en el status; el menú también abre sobre un programa en marcha
+  (se lanza el nuevo y se cierra el anterior)
+
 PANEL IA (pi coding agent)
   Enter               enviar la pregunta
   ↑↓                  historial de preguntas
@@ -1610,6 +2608,7 @@ GENERAL
   Ctrl+S              guardar
   Ctrl+K              limpiar la terminal
   Ctrl+F / Ctrl+T     tree de ficheros / terminal
+  Ctrl+P / Ctrl+G     menú de programas / cerrar programa en marcha
 "#;
 
 fn handle_help_key(app: &mut App, k: KeyEvent) {
@@ -1617,7 +2616,8 @@ fn handle_help_key(app: &mut App, k: KeyEvent) {
         return;
     }
     match k.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
+        // la misma tecla que abre la ayuda la cierra (F1 / ?)
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(1) | KeyCode::Char('?') => {
             app.help_open = false;
             app.help_scroll = 0;
         }
@@ -2049,7 +3049,7 @@ fn handle_editor_key(app: &mut App, k: KeyEvent) {
             KeyCode::Char('x') | KeyCode::Delete => app.delete_selection(),
             _ => {}
         },
-        Mode::Shell | Mode::Ai | Mode::Browser => {}
+        Mode::Shell | Mode::Ai | Mode::Browser | Mode::Program => {}
     }
 }
 
@@ -2200,8 +3200,10 @@ impl Frame {
     }
 }
 
-/// escribe en la terminal únicamente las celdas que cambiaron respecto al frame anterior
-fn render_frame(prev: &mut Frame, cur: &Frame, out: &mut io::Stdout) -> io::Result<()> {
+/// escribe en la terminal únicamente las celdas que cambiaron respecto al
+/// frame anterior; con `force` se reescriben todas (borra lo que un aviso
+/// del kernel haya pintado encima en las consolas de texto)
+fn render_frame(prev: &mut Frame, cur: &Frame, out: &mut io::Stdout, force: bool) -> io::Result<()> {
     if prev.w != cur.w || prev.h != cur.h {
         // cambio de tamaño: limpiar y repintar todo
         *prev = Frame::new(cur.w, cur.h);
@@ -2213,13 +3215,13 @@ fn render_frame(prev: &mut Frame, cur: &Frame, out: &mut io::Stdout) -> io::Resu
         let mut x = 0usize;
         while x < w {
             let i = row + x;
-            if prev.cells[i] == cur.cells[i] {
+            if !force && prev.cells[i] == cur.cells[i] {
                 x += 1;
                 continue;
             }
             // tramo de celdas cambiadas: un solo MoveTo y cada celda con su estilo
             queue!(out, MoveTo(x as u16, y as u16))?;
-            while x < w && prev.cells[row + x] != cur.cells[row + x] {
+            while x < w && (force || prev.cells[row + x] != cur.cells[row + x]) {
                 let c = cur.cells[row + x];
                 let st = c.st;
                 if let Some(fg) = st.fg {
@@ -2248,6 +3250,10 @@ fn render_frame(prev: &mut Frame, cur: &Frame, out: &mut io::Stdout) -> io::Resu
 
 /// aplica una secuencia SGR (parámetros de ESC[...m) sobre un estilo
 fn parse_sgr(params: &str, mut st: Style) -> Style {
+    // ESC[m sin parámetros = restaurar el estilo por defecto
+    if params.trim().is_empty() {
+        return Style::default();
+    }
     const FD: [Color; 8] = [
         Color::Black,
         Color::DarkRed,
@@ -2312,6 +3318,115 @@ fn parse_sgr(params: &str, mut st: Style) -> Style {
     st
 }
 
+/// secuencias CSI del mini-emulador del panel shell: readline las usa al
+/// editar (Delete → DCH, Ctrl+U → EL, flechas → CUF/CUB…); sin
+/// interpretarlas, los caracteres que se borraban se quedaban pintados
+fn csi_shell(
+    lines: &mut Vec<Vec<(char, Style)>>,
+    x: &mut usize,
+    st: &mut Style,
+    params: &str,
+    fin: char,
+) {
+    let mut ps = params.split(';');
+    let n1: usize = ps.next().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+    let n0: usize = params
+        .split(';')
+        .next()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    match fin {
+        'm' => {
+            *st = if params.is_empty() {
+                Style::default()
+            } else {
+                parse_sgr(params, *st)
+            };
+        }
+        // CUF / CUB: cursor a la derecha / izquierda dentro de la línea
+        'C' => {
+            if let Some(line) = lines.last() {
+                *x = (*x + n1).min(line.len());
+            }
+        }
+        'D' => *x = x.saturating_sub(n1),
+        // CHA: columna absoluta (1-based)
+        'G' => {
+            if let Some(line) = lines.last() {
+                *x = (n1 - 1).min(line.len());
+            }
+        }
+        // CUP: sólo se usa la columna — la edición ocurre en la última línea
+        'H' | 'f' => {
+            let col: usize = params
+                .split(';')
+                .nth(1)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(1);
+            if let Some(line) = lines.last() {
+                *x = col.saturating_sub(1).min(line.len());
+            }
+        }
+        // DCH: borrar n caracteres bajo el cursor (tecla Delete)
+        'P' => {
+            if let Some(line) = lines.last_mut() {
+                if *x < line.len() {
+                    let end = (*x + n1).min(line.len());
+                    line.drain(*x..end);
+                }
+            }
+        }
+        // ICH: insertar n espacios; el cursor no se mueve
+        '@' => {
+            if let Some(line) = lines.last_mut() {
+                for _ in 0..n1 {
+                    let at = (*x).min(line.len());
+                    line.insert(at, (' ', Style::default()));
+                }
+            }
+        }
+        // EL: desde el cursor (0) · hasta el cursor (1) · toda la línea (2)
+        'K' => {
+            if let Some(line) = lines.last_mut() {
+                match n0 {
+                    1 => {
+                        for c in line.iter_mut().take(*x + 1) {
+                            *c = (' ', Style::default());
+                        }
+                    }
+                    2 => {
+                        for c in line.iter_mut() {
+                            *c = (' ', Style::default());
+                        }
+                    }
+                    _ => line.truncate(*x),
+                }
+            }
+        }
+        // ED: 2/3 limpia todo (clear) · 0 desde el cursor · 1 hasta el cursor
+        'J' => match n0 {
+            2 | 3 => {
+                lines.clear();
+                lines.push(Vec::new());
+                *x = 0;
+            }
+            1 => {
+                if let Some(line) = lines.last_mut() {
+                    for c in line.iter_mut().take(*x + 1) {
+                        *c = (' ', Style::default());
+                    }
+                }
+            }
+            _ => {
+                if let Some(line) = lines.last_mut() {
+                    line.truncate(*x);
+                }
+            }
+        },
+        _ => {}
+    }
+}
+
 /// pinta la salida del shell en el frame interpretando \r, \b, \n y colores ANSI.
 /// Un mini-emulador de terminal: sin él, los \r de readline (historial con ↑)
 /// concatenaban dos comandos seguidos.
@@ -2356,9 +3471,9 @@ fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, rows: u16, are
                     while j < chars.len() && !('@'..='~').contains(&chars[j]) {
                         j += 1;
                     }
-                    if j < chars.len() && chars[j] == 'm' {
+                    if j < chars.len() {
                         let params: String = chars[i + 2..j].iter().collect();
-                        st = parse_sgr(&params, st);
+                        csi_shell(&mut lines, &mut x, &mut st, &params, chars[j]);
                     }
                     i = j + 1;
                 } else if i + 1 < chars.len() && chars[i + 1] == ']' {
@@ -2436,6 +3551,12 @@ fn draw(app: &mut App) -> Result<()> {
     let area_w = w.saturating_sub(bx);
     app.ensure_hscroll(area_w as usize);
 
+    // el programa ocupa el área del editor: su PTY sigue la geometría actual
+    // (resize de terminal, borde editor/shell, abrir/cerrar el tree)
+    if let Some(p) = app.program.as_mut() {
+        p.resize(editor_rows.max(1), area_w.max(1));
+    }
+
     if !app.search_query.is_empty() {
         app.matches = compute_matches(&app.lines, &app.search_query);
         if app.match_idx >= app.matches.len() {
@@ -2452,10 +3573,19 @@ fn draw(app: &mut App) -> Result<()> {
 
     if app.help_open {
         draw_help(app, editor_rows, bx, area_w, &mut fr);
+    } else if app.mode == Mode::Program {
+        if let Some(p) = &app.program {
+            p.term.draw(&mut fr, bx, editor_rows);
+        }
     } else if app.mode == Mode::Ai {
         draw_ai_pane(app, editor_rows, bx, area_w, &mut fr);
     } else if app.mode != Mode::Browser {
         draw_editor_lines(app, editor_rows, bx, area_w, &mut fr);
+    }
+
+    // menú de programas: siempre encima del área principal
+    if app.menu_open {
+        draw_menu(app, bx, area_w, editor_rows, &mut fr);
     }
 
     // separador del shell (solo a la derecha del navegador)
@@ -2473,6 +3603,7 @@ fn draw(app: &mut App) -> Result<()> {
         Mode::Shell => "SHELL ",
         Mode::Ai => "AI    ",
         Mode::Browser => "BROWSE",
+        Mode::Program => "PROG  ",
     };
 
     let dirty = if app.dirty { " [+]".to_string() } else { String::new() };
@@ -2508,6 +3639,9 @@ fn draw(app: &mut App) -> Result<()> {
         Mode::Shell => {
             "escribe comandos · Ctrl+B tmux · Ctrl+A/E/K readline · Shift+Tab editor · Ctrl+Q salir"
         },
+        Mode::Program => {
+            "teclas al programa · Ctrl+P menú · Ctrl+G cerrar · Shift+Tab shell · Ctrl+Q salir"
+        },
     };
     let help_text: String = help.chars().take(w as usize).collect();
     fr.text(
@@ -2523,7 +3657,7 @@ fn draw(app: &mut App) -> Result<()> {
     // cursor bloque del editor: celda en vídeo inverso dentro del frame
     if !app.sudo_prompt
         && !app.searching
-        && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell)
+        && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell | Mode::Program)
     {
         let y = app.screen_row_of(app.row).min(editor_rows.saturating_sub(1) as usize) as u16;
         let x = (bx as usize + app.gutter() + app.col.saturating_sub(app.left))
@@ -2551,7 +3685,8 @@ fn draw(app: &mut App) -> Result<()> {
     }
 
     // diff con el frame anterior: solo se reescriben las celdas que cambiaron
-    render_frame(&mut app.prev, &fr, &mut out)?;
+    let force = std::mem::take(&mut app.force_full);
+    render_frame(&mut app.prev, &fr, &mut out, force)?;
 
     // cursor real del terminal según el modo
     if app.sudo_prompt || app.searching {
@@ -2564,6 +3699,21 @@ fn draw(app: &mut App) -> Result<()> {
     } else if app.mode == Mode::Shell {
         let cy = (shell_top + shell_rows.saturating_sub(2)).min(h.saturating_sub(3));
         queue!(out, Show, MoveTo(bx, cy))?;
+    } else if app.mode == Mode::Program {
+        // el cursor del programa (htop, less…) donde él lo haya puesto
+        let vis = app
+            .program
+            .as_ref()
+            .map(|p| p.term.cursor_visible)
+            .unwrap_or(false);
+        if vis {
+            let p = app.program.as_ref().unwrap();
+            let cx = bx + (p.term.x as u16).min(area_w.saturating_sub(1));
+            let cy = (p.term.y as u16).min(editor_rows.saturating_sub(1));
+            queue!(out, Show, MoveTo(cx, cy))?;
+        } else {
+            queue!(out, Hide, MoveTo(0, 0))?;
+        }
     } else {
         // editor / navegador: el cursor se pinta en el frame; ocultar el real
         queue!(out, Hide, MoveTo(0, 0))?;
