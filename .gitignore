@@ -21,3 +21,7 @@ Thumbs.db
 *.dll
 *.exe
 *.pdb
+
+# Python (tests)
+__pycache__/
+*.pyc
