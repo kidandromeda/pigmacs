@@ -11,7 +11,7 @@ panel de **inteligencia artificial** (opencode). Fase 1 y 2 completadas.
 **Requisitos:** Linux x86-64
 
 ```bash
-curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v1.0.1/pigmacs -o pigmacs && chmod +x pigmacs
+curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v2.0.0/pigmacs -o pigmacs && chmod +x pigmacs
 ./pigmacs
 ```
 
@@ -101,7 +101,8 @@ Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 ## Programas en la ventana principal (menú Ctrl+P)
 
 `Ctrl+P` / `Alt+P` abre un menú con los programas instalados en el PATH
-(`htop`, `btop`, `glances`, `ncdu`, `ranger`, `gitui`, `tmux`, `less`…):
+(`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`, `gitui`,
+`tmux`, `neovim`, `bluetui`, `jeeves`, `lynx`, `w3m`…):
 `j`/`k` o flechas mueven, `Enter` lanza, `Esc`/`q` cierra. El menú no se abre
 en modo SHELL (cede a readline).
 

@@ -20,7 +20,7 @@ s.send("\x10", 0.6)                       # Ctrl+P
 s.read(0.5)
 t = s.scr.text()
 check("Ctrl+P abre el menú", "Lanzar programa" in t)
-check("menú lista los programas", "htop" in t and "less" in t and "ranger" in t, t)
+check("menú lista los programas", "htop" in t and "tmux" in t and "ranger" in t, t)
 check("cursor en la 1ª entrada", "▸ htop" in t)
 check("pie del menú", "Enter lanzar" in t)
 

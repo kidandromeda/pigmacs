@@ -96,8 +96,9 @@ de nuevo no hacía nada. Ahora =F1= y =?= alternan.
 ** 2.1 Qué hace
 
 =Ctrl+P= / =Alt+P= abre un menú flotante con los programas instalados en el
-PATH (=htop=, =btop=, =glances=, =ncdu=, =ranger=, =gitui=, =tmux=,
-=less=, …). =j=/=k= o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
+PATH (=htop=, =btop=, =fastfetch=, =ncdu=, =gdu=, =nmtui=, =ranger=,
+=gitui=, =tmux=, =neovim=, =bluetui=, =jeeves=, =lynx=, =w3m=…). =j=/=k=
+o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
 
 - El programa corre *sobre su propio PTY* ocupando el área del editor.
 - Se dibuja con un *emulador VT100* integrado (rejilla de celdas): colores
