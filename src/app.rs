@@ -587,6 +587,7 @@ impl App {
         let Some(p) = self.browser.current() else { return };
         if p.is_dir() {
             self.browser.cd(p);
+            self.status = format!("Directorio: {}", self.browser.cwd.display());
         } else {
             self.open_file(p);
         }
@@ -603,6 +604,7 @@ impl App {
             let p = parent.to_path_buf();
             if !p.as_os_str().is_empty() {
                 self.browser.cd(p);
+                self.status = format!("Directorio: {}", self.browser.cwd.display());
             }
         }
     }

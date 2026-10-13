@@ -7,6 +7,7 @@ use crossterm::{
     event::{KeyCode, KeyEvent, KeyModifiers},
     style::Color,
 };
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -50,6 +51,13 @@ impl Browser {
     }
 
     pub(crate) fn cd(&mut self, dir: PathBuf) {
+        // el cwd del proceso sigue al tree: gdu, ncdu y cualquier programa
+        // lanzado arrancan en el directorio que estás mirando
+        if env::set_current_dir(&dir).is_ok() {
+            // $PWD sincronizada: algunos programas (p. ej. ranger) confían
+            // en la variable y la comparan con su cwd real
+            env::set_var("PWD", &dir);
+        }
         self.cwd = dir;
         self.cursor = 0;
         self.scroll = 0;

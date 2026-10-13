@@ -29,7 +29,7 @@ pub(crate) const MENU: [(&str, &[&str]); 15] = [
     ("gdu", &["gdu"]),
     ("nmtui", &["nmtui"]),
     ("ranger", &["ranger"]),
-    ("mc", &["mc"]),
+    ("Midnight Commander", &["mc"]),
     ("gitui", &["gitui"]),
     ("tmux", &["tmux"]),
     ("neovim", &["nvim"]),
@@ -119,7 +119,8 @@ pub(crate) fn launch_program(app: &mut App, name: &str, argv: &[&str]) -> Result
     let mut cmd = CommandBuilder::new(argv[0]);
     cmd.args(&argv[1..]);
     cmd.env("TERM", env::var("TERM").unwrap_or_else(|_| "xterm-256color".into()));
-    cmd.cwd(&app.work_dir);
+    // el programa arranca en el dir del tree (allí está el cwd del proceso)
+    cmd.cwd(&app.browser.cwd);
     let child = pty.slave.spawn_command(cmd)?;
     let mut reader = pty.master.try_clone_reader()?;
     let output = Arc::new(Mutex::new(Vec::new()));

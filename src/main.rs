@@ -42,7 +42,13 @@ use std::{
 
 
 pub(crate) fn main() -> Result<()> {
-    let path = PathBuf::from(env::args().nth(1).unwrap_or_else(|| "untitled.org".into()));
+    // ruta absoluta desde el arranque: el cwd del proceso sigue al tree
+    // (más abajo) y un path relativo rompería el guardado
+    let mut path = PathBuf::from(env::args().nth(1).unwrap_or_else(|| "untitled.org".into()));
+    if path.is_relative() {
+        let base = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        path = base.join(path);
+    }
     let text = fs::read_to_string(&path).unwrap_or_default();
     let lines = if text.is_empty() {
         vec![String::new()]
@@ -96,6 +102,14 @@ pub(crate) fn main() -> Result<()> {
         .filter(|p| !p.as_os_str().is_empty())
         .map(|p| fs::canonicalize(&p).unwrap_or(p))
         .unwrap_or_else(|| work_dir.clone());
+
+    // el proceso arranca con el cwd del tree: los programas del menú
+    // (gdu, ncdu…) y cualquier spawn futuro arrancan en el dir mirado
+    if env::set_current_dir(&cwd).is_ok() {
+        // $PWD sincronizada: algunos programas (p. ej. ranger) confían
+        // en la variable y la comparan con su cwd real
+        env::set_var("PWD", &cwd);
+    }
 
     let mut browser = Browser {
         active: true,

@@ -96,10 +96,16 @@ de nuevo no hacía nada. Ahora =F1= y =?= alternan.
 ** 2.1 Qué hace
 
 =Ctrl+P= / =Alt+P= abre un menú flotante con los programas instalados en el
-PATH (=htop=, =btop=, =fastfetch=, =ncdu=, =gdu=, =nmtui=, =ranger=, =mc=,
-=gitui=, =tmux=, =neovim=, =bluetui=, =jeeves=, =lynx=, =w3m=…). =j=/=k=
+PATH (=htop=, =btop=, =fastfetch=, =ncdu=, =gdu=, =nmtui=, =ranger=,
+=Midnight Commander= (se lanza con =mc=), =gitui=, =tmux=, =neovim=,
+=bluetui=, =jeeves=, =lynx=, =w3m=…). =j=/=k=
 o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
 
+- El cwd del proceso sigue al tree: los programas del menú (=gdu=, =ncdu=…)
+  arrancan en el directorio que estás mirando (la terminal interna, =bash=,
+  se lanza al arrancar pigmacs y conserva el suyo). Al hacer =chdir= se
+  sincroniza también la variable =$PWD=, porque algunos programas (p. ej.
+  =ranger=) confían en ella y se hacen =chdir= a su valor.
 - =neovim= se lanza como =nvim=; =lynx= y =w3m= arrancan en
   =www.duckduckgo.com=.
 - El programa corre *sobre su propio PTY* ocupando el área del editor.
@@ -316,7 +322,7 @@ mini-emulador VT100= (CUP/EL/ED/CR/LF) — necesario porque el renderer pinta
 | suite         | qué cubre                                              | checks |
 |---------------+--------------------------------------------------------+--------|
 | =test_partA.py= | limpieza al arrancar · Delete/Ctrl+U/Backspace sin fantasmas · salir | 6 |
-| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree, IA, borde, ayuda F1/?/Esc (y F1 desde el shell), shell (Ctrl+J y Shift+Tab, Ctrl+T ida y vuelta), grupo Alt | 39 |
+| =smoke_fase1.py= | modos, editor (insert/undo/redo/visual), guardar, tree (y cwd del proceso: gdu/ranger arranca en el dir mirado), IA, borde, ayuda F1/?/Esc (y F1 desde el shell), shell (Ctrl+J y Shift+Tab, Ctrl+T ida y vuelta), grupo Alt | 46 |
 | =test_fase2.py= | menú, navegar, lanzar htop, cesión de teclas, Ctrl+J + reenfoque, Shift+Tab, resize, Ctrl/G+Alt+G, huérfanos, fichero intacto | 35 |
 
 Uso (desde la raíz del repo):

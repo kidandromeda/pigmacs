@@ -93,13 +93,15 @@ TREE DE FICHEROS
   b                   marcar/desmarcar el directorio actual
   B                   saltar al siguiente marcador (★ en el título)
   Esc                 volver al editor (el tree sigue visible)
+  el cwd del proceso sigue al tree: gdu, ncdu… arrancan en el dir mirado
 
 PROGRAMAS EN LA VENTANA PRINCIPAL (Ctrl+P)
   j k / ↑↓            mover por el menú · Enter lanzar · Esc/q cerrar
   (sólo aparecen los instalados en el PATH: htop, btop, fastfetch,
-   ncdu, gdu, nmtui, ranger, mc, gitui, tmux, neovim, bluetui, jeeves,
-   lynx, w3m)
-   (neovim se lanza como nvim; lynx y w3m abren www.duckduckgo.com)
+   ncdu, gdu, nmtui, ranger, Midnight Commander, gitui, tmux, neovim,
+   bluetui, jeeves, lynx, w3m)
+   (neovim se lanza como nvim; Midnight Commander con mc; lynx y w3m
+   abren www.duckduckgo.com)
   el programa corre sobre su propio PTY ocupando el área del editor y
   se dibuja con un emulador VT100 (colores 256, pantalla alterna…)
   mientras está activo, sus teclas le ceden salvo Ctrl/Alt+Q (salir),

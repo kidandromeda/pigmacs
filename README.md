@@ -1,7 +1,14 @@
 # pigmacs — pigmeo + emacs
 
-Editor multimodal estilo vim para ficheros **org** con shell PTY integrado y
-panel de **inteligencia artificial** (opencode). Fase 1 y 2 completadas.
+Siempre he trabajado en la terminal de linux y me ha resultado una incomodidad la introducción directa de los comandos. Lo lógico es tener una lista de ellos y copiarlos, pegarlos o modificarlos para, posteriormente, lanzarlos a la terminal.
+
+En mis máquinas tengo instalado emacs, y este problema lo tengo cubierto de sobra, pero para sistemas nuevos o de fuera de casa siempre he querido tener un programa sencillo ( **un sólo archivo ejecutable** ) que permitiera navegar por los ficheros fácilmente y **lanzar** lineas o texto seleccionado **directamente a terminal**. Para eso empecé haciendo este programa.
+
+Esta es su principal función: cargo el programa en una terminal, voy a un archivo mío con una relación de los comandos que uso en terminal mediante su **navegador de archivos** integrado, **edito** los comandos de ese archivo y los **lanzo a una terminal**. Ese era el principal objetivo de pigmacs.
+Como segundo objetivo, que el programa fuera un lector directo de archivos **org**, con **plegado** de encabezados, coloreado de texto y edición.
+Posteriormente he ido añadiendo funcionalidades útiles que me resultaban incómodas en las tty (entorno para el que se ha diseñado el programa, más que para entornos de escritorio), como un lanzador de aplicaciones con TUI más conocidas en el mismo programa (tmux, htop, ncdu... que tienen que estar instalados previamente), un panel para hacer sencillas preguntas a la IA (si se tiene instalado Pi Coding Agent) y algunas más.
+
+El programa es sólo un archivo ejecutable único. En un ordenador con un SO básico, sin entorno gráfico, requiere la copia del programa y de un archivo con los comandos que suelas usar (yo lo tengo en formato org). Si el ordenador tiene conexión a internet, solo hace falta descargarlo del repo y ya tienes un mini sistema operativo cómodo funcionando en una tty.
 
  **Nota del autor:** Aviso de que este proyecto ha sido creado en su mayor parte mediante *vibecoding* (programación asistida por IA). La calidad del código puede no ser óptima. Mientras que los programas sean pequeños e independientes, no lo considero mala práctica.
  Este programa es fruto de una necesidad personal. Trataré de pasarme por el repositorio cada cierto tiempo. Sientánse libres de usarlo o forkearlo o lo que quieran.
@@ -11,7 +18,7 @@ panel de **inteligencia artificial** (opencode). Fase 1 y 2 completadas.
 **Requisitos:** Linux x86-64
 
 ```bash
-curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v2.0.0/pigmacs -o pigmacs && chmod +x pigmacs
+curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v3.0.0/pigmacs -o pigmacs && chmod +x pigmacs
 ./pigmacs
 ```
 
@@ -101,11 +108,12 @@ Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 ## Programas en la ventana principal (menú Ctrl+P)
 
 `Ctrl+P` / `Alt+P` abre un menú con los programas instalados en el PATH
-(`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`, `mc`,
-`gitui`, `tmux`, `neovim`, `bluetui`, `jeeves`, `lynx`, `w3m`…):
-`j`/`k` o flechas mueven, `Enter` lanza, `Esc`/`q` cierra. El menú no se abre
-en modo SHELL (cede a readline). `neovim` se lanza con el comando `nvim`;
-`lynx` y `w3m` arrancan en `www.duckduckgo.com`.
+(`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`,
+`Midnight Commander`, `gitui`, `tmux`, `neovim`, `bluetui`, `jeeves`,
+`lynx`, `w3m`…): `j`/`k` o flechas mueven, `Enter` lanza, `Esc`/`q` cierra.
+El menú no se abre en modo SHELL (cede a readline). `neovim` se lanza con el
+comando `nvim`; `Midnight Commander` con el comando `mc`; `lynx` y `w3m`
+arrancan en `www.duckduckgo.com`.
 
 - el programa corre sobre **su propio PTY** ocupando el área del editor, con un
   emulador VT100 integrado (colores 256 / truecolor, pantalla alterna, región
@@ -139,6 +147,9 @@ Columna fija a la izquierda tipo treemacs:
 - `j`/`k` — bajar/subir · `l` — entrar en carpeta · `h` — carpeta anterior
 - `Enter` — abrir fichero en el editor · `g`/`G` — principio/fin
 - los directorios se muestran en amarillo y los ficheros en gris
+- el cwd del proceso sigue al tree: los programas del menú (`gdu`, `ncdu`…)
+  arrancan en el directorio que estás mirando y el status muestra su ruta
+  (la terminal interna no: `bash` se lanza al arrancar pigmacs)
 
 ## Colores org (v1.0.1)
 

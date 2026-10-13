@@ -24,10 +24,10 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (80 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (87 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 39 checks — smoke de fases anteriores
+python3 smoke_fase1.py     # 46 checks — smoke de fases anteriores
 python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize…
 ```
 
@@ -51,7 +51,7 @@ python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize�
 | `shell.rs` | 316 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `csi_shell`, `draw_shell_output`, `resize` |
 | `program.rs` | 222 | `Program` (PTY del programa), `MENU` (15 entradas: nombre visible + argv), `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
 | `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` |
-| `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd`, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
+| `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd` **arrastra el cwd del proceso**, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
 
 Notas del split (v2.0.0): se partió un `main.rs` de 4016 líneas. Toda la
@@ -128,6 +128,10 @@ Reglas críticas que **no se deben romper**:
 
 ## Estado (2026-10-13)
 
-- **v2.0.0** commiteada localmente: split de `main.rs` en 10 módulos + menú de
-  15 programas. Commit `52facf6` y tag `v2.0.0` **sólo locales** (sin push).
-- 80/80 checks en verde, 0 warnings.
+- **v3.0.0** en local (bump desde 2.0.0): el cwd del proceso sigue al tree
+  (`Browser::cd` hace `chdir` y sincroniza `$PWD`, en la que confían programas
+  como ranger), `Ctrl+T` de ida y vuelta, `F1` de ayuda en todos los paneles
+  (incluido el shell), `MENU` con argv (neovim→nvim, lynx/w3m con
+  www.duckduckgo.com) y 15 programas (con mc como «Midnight Commander»).
+- Tag `v2.0.0` + commit `52facf6` **sólo locales**: git sólo local, sin push.
+- 87/87 checks en verde, 0 warnings.

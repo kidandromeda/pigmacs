@@ -102,11 +102,13 @@ class Screen:
 
 
 class Session:
-    def __init__(self, files=None, w=110, h=30):
+    def __init__(self, files=None, w=110, h=30, dirs=None):
         self.w, self.h = w, h
         self.scr = Screen(w, h)
         self.work = tempfile.mkdtemp(prefix="pigmacs_test_")
         os.makedirs(self.work, exist_ok=True)
+        for d in dirs or []:
+            os.makedirs(os.path.join(self.work, d), exist_ok=True)
         files = files if files is not None else {"test.org": "* prueba\nlinea uno\n"}
         for name, content in files.items():
             with open(os.path.join(self.work, name), "w") as f:

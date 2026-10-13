@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Smoke de regresión (fase 1 + parte A): modos, editor, shell, tree, IA, ayuda."""
-import sys, time, os
+import sys, time, os, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ptylib import Session, check_factory
 
@@ -8,7 +8,7 @@ fails = []
 check = check_factory(fails)
 
 # ——— sesión principal (grupo Ctrl) ———
-s = Session()
+s = Session(dirs=["sub"])
 s.read(1.3)
 check("arranca en NORMAL", "NORMAL" in s.scr.text())
 check("el tree se ve al arrancar", "test.org" in s.scr.text())
@@ -77,6 +77,42 @@ check("Ctrl+F enfoca el tree (BROWSE)", "BROWSE" in s.scr.text())
 s.send("\x06", 0.5)
 s.read(0.5)
 check("Ctrl+F 2ª vez vuelve al editor", "NORMAL" in s.scr.text())
+
+# el cwd del proceso sigue al tree: un gdu/ncdu lanzado desde el menú
+# ve el directorio que estás mirando
+s.send("\x06", 0.6)                      # Ctrl+F → tree (cursor en «sub»)
+s.read(0.4)
+check("BROWSE con el tree enfocado", "BROWSE" in s.scr.text())
+s.send("l", 0.5)                         # entra en «sub»
+s.read(0.4)
+check("entrar en un dir fija el cwd allí",
+      "Directorio: %s/sub" % s.work in s.scr.text(), s.scr.lines()[-2:])
+s.send("h", 0.5)                         # sube al padre
+s.read(0.4)
+check("subir vuelve al cwd del padre",
+      "Directorio: %s" % s.work in s.scr.text(), s.scr.lines()[-2:])
+s.send("l", 0.5)                         # otra vez a sub: se lanza desde ahí
+s.read(0.4)
+s.send("\x10", 0.6)                      # Ctrl+P → el menú abre desde BROWSE
+s.read(0.5)
+for _ in range(20):                      # bajar hasta ▸ ranger
+    if any("▸ ranger" in l for l in s.scr.lines()):
+        break
+    s.send("j", 0.12)
+    s.read(0.25)
+check("menú navega hasta ranger", any("▸ ranger" in l for l in s.scr.lines()))
+s.send("\r", 2.2)                        # Enter → ranger arranca en el cwd del tree
+s.read(0.8)
+# el cwd real del proceso lanzado: lo que vería un gdu/ncdu
+pid = subprocess.run(["pgrep", "-n", "-x", "ranger"],
+                     capture_output=True, text=True).stdout.strip()
+cwd = os.readlink("/proc/%s/cwd" % pid) if pid else ""
+check("el programa arranca en el cwd del tree",
+      cwd == os.path.realpath(os.path.join(s.work, "sub")), cwd)
+s.send("\x07", 0.8)                      # Ctrl+G → cierra ranger y vuelve al editor
+s.read(0.6)
+check("Ctrl+G cierra el programa", "Programa cerrado" in s.scr.text())
+check("vuelve al editor tras cerrar", "NORMAL" in s.scr.text())
 
 # IA
 s.send("\x01", 0.7)                      # Ctrl+A
