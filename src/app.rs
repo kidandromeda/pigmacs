@@ -1,4 +1,8 @@
-// ————— estado central —————
+// ————— pigmacs · estado central —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 use crate::{
     browser::Browser,
     frame::{strip_ansi, Frame},

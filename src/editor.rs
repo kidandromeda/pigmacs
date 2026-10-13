@@ -1,4 +1,8 @@
-// ————— editor de texto/org —————
+// ————— pigmacs · editor de texto/org —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 use crate::{
     app::{App, Mode},
     frame::{Frame, Style},

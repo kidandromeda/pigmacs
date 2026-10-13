@@ -1,4 +1,8 @@
-// ————— terminal (shell PTY) —————
+// ————— pigmacs · terminal (shell PTY) —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 use crate::{
     app::App,
     frame::{Frame, Style},

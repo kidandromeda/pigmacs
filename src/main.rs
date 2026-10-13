@@ -1,4 +1,8 @@
-// pigmacs — editor multimodal org con shell PTY, panel IA y programa integrado
+// ————— pigmacs · declaraciones mod · prelude · main() · run() · atajos globales —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 mod ai;
 mod app;
 mod browser;

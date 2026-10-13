@@ -1,4 +1,8 @@
-// ————— navegador de ficheros (tree) —————
+// ————— pigmacs · navegador de ficheros (tree) —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 use crate::{
     app::{App, Mode},
     frame::{Frame, Style},

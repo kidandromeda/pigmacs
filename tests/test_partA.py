@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# ————— pigmacs · tests · parte A: limpieza al arrancar y Delete/Ctrl+U —————
+# Autor:      kidandromeda
+# Licencia:   MIT
+# Versión:    3.0.1
+# Fecha:      2026-10-13
 """Parte A: limpieza al arrancar + fantasmas del Delete/Ctrl+U en el shell.
 
 Reconstruye la pantalla con un mini-emulador VT100 (CUP/EL/CR/LF/SGR) a

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# ————— pigmacs · tests · fase 2: menú Ctrl+P y programa integrado —————
+# Autor:      kidandromeda
+# Licencia:   MIT
+# Versión:    3.0.1
+# Fecha:      2026-10-13
 """Fase 2: menú Ctrl+P · programa en la ventana principal · Ctrl+G lo cierra."""
 import sys, time, os, subprocess, shutil
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

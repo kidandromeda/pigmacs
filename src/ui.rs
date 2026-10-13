@@ -1,4 +1,8 @@
-// ————— render: dibujo del frame completo —————
+// ————— pigmacs · render: dibujo del frame completo —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 use crate::{
     ai::draw_ai_pane,
     app::{layout, App, Mode},

@@ -1,4 +1,8 @@
-// ————— programa lanzado en la ventana principal (menú Ctrl+P) —————
+// ————— pigmacs · programa lanzado en la ventana principal (menú Ctrl+P) —————
+// Autor:      kidandromeda
+// Licencia:   MIT
+// Versión:    3.0.1
+// Fecha:      2026-10-13
 use crate::{
     app::{layout, App, Mode},
     browser::browser_width,

@@ -126,8 +126,63 @@ Reglas críticas que **no se deben romper**:
 - `tests/` — `ptylib.py` (harness PTY + emulador), `test_partA.py`,
   `smoke_fase1.py`, `test_fase2.py`.
 
+## Plan de fase 3 (pendiente): rediseño visual «tty puro»
+
+El usuario lo pidió el 2026-10-13 y aún no se ha tocado código de esta fase.
+Objetivo: que pigmacs sea *bonita*, con la elegancia que se puede lograr en
+una **tty real de 16 colores**.
+
+**Restricciones duras (decisión del usuario):**
+
+- La app es **sólo para tty** (consola de texto del kernel). Lo que sólo se
+  vea mejor en 256 colores / truecolor / entorno gráfico **no se hace**.
+- Paleta limitada a los **16 colores ANSI**; nada de `Color::AnsiValue`,
+  `Color::Rgb` ni detección de «soporte truecolor».
+- Sin emojis ni glifos powerline: **no existen en la fuente VGA de la
+  consola**. Glifos duros actuales (ya usados y probados en tty real):
+  `─│┌┐└┘ ├┤ ▸ ★ ● · ⋯`. Las esquinas redondeadas `╭╮╰╯` (U+256D-2570)
+  **hay que verificarlas en consola real** antes de usarlas; si no están en
+  la fuente, se quedan las rectas `┌┐└┘`.
+- Nada de dependencias nuevas para esto (siguen valiendo sólo 3).
+- Los tests (`tests/*.py`) comparan **texto**, no estilos: el rediseño es
+  compatible, pero **no romper** cadenas asumidas por los tests
+  (`NORMAL`, `▸ htop`, `▸ ranger`, mensajes de status…).
+
+**Parte A — elegancia (render):**
+
+1. `src/theme.rs`: paleta **semántica única** en 16 colores (acento, ok,
+   error, aviso, dim, borde, selección, cabeceras org por nivel…). Todo el
+   pintado pasa por ella; eliminar colores sueltos repartidos por módulos.
+2. **Barra superior** (fila 0): identidad `pigmacs`, fichero abierto,
+   indicador de cambios (`●`), y **píldora de modo con color de fondo**
+   (NORMAL/INSERT/VISUAL/…). Restar una fila del layout del editor.
+3. Bordes y separadores con color de acento tenue; popup del menú con borde
+   + **soma simulada** (celdas en bg oscuro desplazadas 1×1, se ve en tty).
+4. Barra de estado: píldora de modo, ruta y posición `(f,c)` alineada a la
+   derecha; barra de ayuda con **teclas en color y descripciones dim**.
+5. Editor: selección con **fondo de acento** (no `reverse`), números de
+   línea dim, marcador de pliegue tipo `⋯ n↓`, cursor del modo en color.
+6. Tree: cabecera con título, icono/dir en color, selección con acento,
+   ocultos dim.
+7. Panel IA y menú Ctrl+P con la misma lengua visual que el resto.
+
+**Parte B — funcional (informe §3, prioridad #A):**
+
+8. **Resaltado de sintaxis** en bloques `#+BEGIN_SRC` (`src_colorize()` en
+   `editor.rs`, sólo líneas visibles): python, bash/sh, rust, c/cpp, js/ts
+   y fallback (números, cadenas, comentarios). Ver §3 del informe.
+9. **Menú difuso**: escribir en el menú filtra (`htp` → `htop`); Enter
+   lanza lo tecleado tal cual si no hay coincidencia. Ver §3 del informe.
+
+**Definición de hecho:** `cargo build` 0 warnings + 87/87 checks en verde
++ comprobación **en una consola VT real** (no en xterm) antes de commit;
+después actualizar `HELP_TEXT`, README e informe si cambia la UI.
+
 ## Estado (2026-10-13)
 
+- **v3.0.1**: cabecera estándar en los 14 ficheros de `src/` y `tests/`
+  (proyecto · autor `kidandromeda` · licencia MIT · versión · fecha) +
+  fichero `LICENSE` (MIT) + `authors`/`license` en `Cargo.toml`.
 - **v3.0.0** en local (bump desde 2.0.0): el cwd del proceso sigue al tree
   (`Browser::cd` hace `chdir` y sincroniza `$PWD`, en la que confían programas
   como ranger), `Ctrl+T` de ida y vuelta, `F1` de ayuda en todos los paneles

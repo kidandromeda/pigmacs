@@ -18,7 +18,7 @@ El programa es sólo un archivo ejecutable único. En un ordenador con un SO bá
 **Requisitos:** Linux x86-64
 
 ```bash
-curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v3.0.0/pigmacs -o pigmacs && chmod +x pigmacs
+curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v3.0.1/pigmacs -o pigmacs && chmod +x pigmacs
 ./pigmacs
 ```
 
@@ -157,3 +157,11 @@ Columna fija a la izquierda tipo treemacs:
 - `TODO` rojo · `DONE` verde
 - bloques `#+BEGIN_SRC`/`#+END_SRC` magenta, contenido gris
 - metadatos `#+...` amarillo
+
+## Licencia
+
+MIT — véase [LICENSE](LICENSE). Autor: **kidandromeda**.
+
+Todos los ficheros de `src/` y `tests/` llevan cabecera con autor, licencia,
+versión global (`3.0.1`) y fecha. La versión del proyecto vive en
+`Cargo.toml` y en los tags de git; los archivos no llevan versión propia.

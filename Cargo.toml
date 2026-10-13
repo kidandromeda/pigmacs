@@ -1,7 +1,10 @@
 [package]
 name = "pigmacs"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2021"
+authors = ["kidandromeda"]
+license = "MIT"
+description = "Editor TUI modal para ficheros .org con shell PTY, panel IA y lanzador de programas"
 
 [dependencies]
 anyhow = "1"
