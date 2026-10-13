@@ -1,18 +1,19 @@
 // ————— pigmacs · programa lanzado en la ventana principal (menú Ctrl+P) —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.0.1
-// Fecha:      2026-10-13
+// Versión:    3.1.0
+// Fecha:      2026-10-14
 use crate::{
     app::{layout, App, Mode},
     browser::browser_width,
-    frame::{Frame, Style},
+    frame::Frame,
     shell::key_bytes_mode,
     term::Term,
+    theme::*,
 };
 use anyhow::Result;
 use crossterm::{
-    event::{KeyCode, KeyEvent},
+    event::{KeyCode, KeyEvent, KeyModifiers},
     style::Color,
     terminal,
 };
@@ -104,6 +105,28 @@ pub(crate) fn menu_entries() -> Vec<(&'static str, &'static [&'static str])> {
     MENU.iter().copied().filter(|(_, argv)| in_path(argv[0])).collect()
 }
 
+/// ¿contiene `q` como subsecuencia? (filtro difuso: "htp" → "htop")
+fn subseq(hay: &str, q: &str) -> bool {
+    let mut it = hay.chars();
+    q.chars().all(|c| it.any(|h| h == c))
+}
+
+/// entradas del menú filtradas por lo tecleado (vacío = todas)
+pub(crate) fn filtered_menu(query: &str) -> Vec<(&'static str, &'static [&'static str])> {
+    let all = menu_entries();
+    let q: String = query
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if q.is_empty() {
+        return all;
+    }
+    all.into_iter()
+        .filter(|(name, _)| subseq(&name.to_lowercase(), &q))
+        .collect()
+}
+
 /// lanza `name` (nombre visible) ejecutando `argv` sobre su propio PTY,
 /// ocupando el área del editor
 pub(crate) fn launch_program(app: &mut App, name: &str, argv: &[&str]) -> Result<()> {
@@ -167,20 +190,45 @@ pub(crate) fn close_program(app: &mut App) {
     app.status = "Programa cerrado".into();
 }
 
-/// teclas del menú: j/k o flechas mueven · Enter lanza · Esc/q cierra
+/// teclas del menú: escribir filtra (difuso) · j/k o flechas mueven ·
+/// Enter lanza (o lo tecleado, si no hay coincidencias) · Esc limpia/cierra
+///
+/// Con el filtro vacío j/k navegan (compatibilidad con los atajos
+/// habituales); una vez empiezas a filtrar, j/k son letras del filtro y
+/// la navegación pasa a las flechas ↑↓.
 pub(crate) fn handle_menu_key(app: &mut App, k: KeyEvent) {
-    let entries = menu_entries();
+    let entries = filtered_menu(&app.menu_query);
+    let filtro_activo = !app.menu_query.is_empty();
     match k.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.menu_open = false,
-        KeyCode::Down | KeyCode::Char('j') => {
+        KeyCode::Esc => {
+            if filtro_activo {
+                app.menu_query.clear();
+                app.menu_cursor = 0;
+            } else {
+                app.menu_open = false;
+            }
+        }
+        KeyCode::Char('q') if !filtro_activo => app.menu_open = false,
+        KeyCode::Down => {
             app.menu_cursor = (app.menu_cursor + 1).min(entries.len().saturating_sub(1));
         }
-        KeyCode::Up | KeyCode::Char('k') => {
+        KeyCode::Up => {
             app.menu_cursor = app.menu_cursor.saturating_sub(1);
+        }
+        KeyCode::Char('j') if !filtro_activo => {
+            app.menu_cursor = (app.menu_cursor + 1).min(entries.len().saturating_sub(1));
+        }
+        KeyCode::Char('k') if !filtro_activo => {
+            app.menu_cursor = app.menu_cursor.saturating_sub(1);
+        }
+        KeyCode::Backspace => {
+            app.menu_query.pop();
+            app.menu_cursor = 0;
         }
         KeyCode::Enter => {
             if let Some((name, argv)) = entries.get(app.menu_cursor).copied() {
                 app.menu_open = false;
+                app.menu_query.clear();
                 // si ese programa ya está en marcha, sólo se recupera el foco
                 // (así Ctrl+J al editor no lo pierde: Ctrl+P + Enter lo recupera)
                 if app.program.as_ref().map(|p| p.name.as_str()) == Some(name) {
@@ -189,50 +237,107 @@ pub(crate) fn handle_menu_key(app: &mut App, k: KeyEvent) {
                 } else if let Err(e) = launch_program(app, name, argv) {
                     app.status = format!("No se pudo lanzar {name}: {e}");
                 }
+            } else if !app.menu_query.trim().is_empty() {
+                // sin coincidencias: lanzar lo tecleado tal cual
+                let cmd = app.menu_query.trim().to_string();
+                let parts: Vec<&str> = cmd.split_whitespace().collect();
+                app.menu_open = false;
+                app.menu_query.clear();
+                if let Err(e) = launch_program(app, &cmd, &parts) {
+                    app.status = format!("No se pudo lanzar {cmd}: {e}");
+                }
+            } else {
+                app.menu_open = false;
             }
+        }
+        KeyCode::Char(c)
+            if !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            app.menu_query.push(c);
+            app.menu_cursor = 0;
         }
         _ => {}
     }
 }
 
-/// menú flotante en el centro del área principal
+/// menú flotante en el centro del área principal: escribe para filtrar
+/// (difuso), Enter lanza, Esc limpia y cierra
 pub(crate) fn draw_menu(app: &mut App, bx: u16, area_w: u16, rows: u16, fr: &mut Frame) {
-    let entries = menu_entries();
+    let entries = filtered_menu(&app.menu_query);
     let cur = app.menu_cursor.min(entries.len().saturating_sub(1));
-    let mut lines: Vec<String> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, (name, _))| format!("{}{name}", if i == cur { "▸ " } else { "  " }))
-        .collect();
-    if lines.is_empty() {
-        lines.push("sin programas en el PATH".into());
+    let mut lines: Vec<(String, bool)> = Vec::new();
+    // línea del filtro (solo si hay algo tecleado)
+    if !app.menu_query.is_empty() {
+        lines.push((format!("> {}_", app.menu_query), false));
     }
-    lines.push("Enter lanzar · Esc cierra".into());
+    if entries.is_empty() {
+        if app.menu_query.is_empty() {
+            lines.push(("sin programas en el PATH".into(), false));
+        } else {
+            lines.push((format!("sin coincidencias para «{}»", app.menu_query), false));
+        }
+    }
+    for (i, (name, _)) in entries.iter().enumerate() {
+        lines.push((format!("{}{name}", if i == cur { "▸ " } else { "  " }), i == cur));
+    }
+    let pie = if entries.is_empty() && !app.menu_query.is_empty() {
+        format!("Enter lanza «{}» · Esc cierra", app.menu_query)
+    } else {
+        "Enter lanzar · Esc cierra".to_string()
+    };
+    lines.push((pie, false));
 
-    let width = 30u16.min(area_w.saturating_sub(2)).max(10);
+    let width = if app.menu_query.is_empty() {
+        30u16.min(area_w.saturating_sub(2)).max(10)
+    } else {
+        (app.menu_query.chars().count() as u16 + 14)
+            .min(area_w.saturating_sub(2))
+            .max(24)
+    };
     let height = (lines.len() as u16 + 2).min(rows.saturating_sub(1));
     let x = bx + area_w.saturating_sub(width) / 2;
     let y = rows.saturating_sub(height) / 2;
 
-    let bd = Style {
-        fg: Some(Color::DarkGrey),
-        ..Default::default()
-    };
-    let title = " Lanzar programa ";
+    // sombra sutil detrás del popup (una columna/fila en oscuro)
+    for sy in (y + 1)..=(y + height) {
+        fr.put(x + width, sy, ' ', fg(DIM));
+    }
+    for sx in (x + 1)..=(x + width) {
+        fr.put(sx, y + height, ' ', fg(DIM));
+    }
+
+    let bd = fg(ACCENT);
+    let title = " pigmacs · Lanzar programa ";
     let dashes = width.saturating_sub(2 + title.len() as u16);
-    fr.text(x, y, &format!("┌{title}{}┐", "─".repeat(dashes as usize)), bd);
-    for (i, line) in lines.iter().take(height.saturating_sub(2) as usize).enumerate() {
+    fr.text(x, y, &format!("┌{title}{}┐", "─".repeat(dashes as usize)), bold(ACCENT_HI));
+    for (i, (line, is_cur)) in lines.iter().take(height.saturating_sub(2) as usize).enumerate() {
         let content: String = line.chars().take(width.saturating_sub(2) as usize).collect();
         let pad = width.saturating_sub(2).saturating_sub(content.chars().count() as u16);
-        let st = if i == cur && i < entries.len() {
-            Style {
-                reverse: true,
-                ..Default::default()
-            }
+        let row = y + 1 + i as u16;
+        // fondo de la fila: selección en acento, resto en oscuro
+        let st = if *is_cur {
+            band(ACCENT_HI, Color::Black)
         } else {
-            Style::default()
+            fg(FG)
         };
-        fr.text(x + 1, y + 1 + i as u16, &format!("{content}{}", " ".repeat(pad as usize)), st);
+        for c in 0..width.saturating_sub(2) {
+            fr.put(x + 1 + c, row, ' ', fg(FG));
+        }
+        fr.text(x + 1, row, &format!("{content}{}", " ".repeat(pad as usize)), st);
+        if *is_cur {
+            for c in content.chars().count() as u16..width.saturating_sub(2) {
+                fr.put(x + 1 + c, row, ' ', band(ACCENT_HI, Color::Black));
+            }
+        }
+        // la línea de ayuda/pie en gris
+        if i + 1 == lines.len() && !*is_cur {
+            fr.text(
+                x + 1,
+                row,
+                &content,
+                fg(DIM),
+            );
+        }
     }
     fr.text(
         x,

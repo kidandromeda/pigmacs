@@ -137,12 +137,21 @@ o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
 
 * 3. Mejoras propuestas (priorizadas)
 
-** TODO [#A] Coloreado de código Python y otros lenguajes
+** DONE [#A] Coloreado de código Python y otros lenguajes
 
-*Problema:* los bloques =#+BEGIN_SRC= se pintan hoy de *gris plano*
-(metadata magenta, delimitadores gris); el contenido no tiene resaltado
-sintáctico. Para el uso principal de =pigmacs= (escribir org con código
-dentro) es la mejora de legibilidad con más relación coste/beneficio.
+*Estado (v3.1.0):* ***entregado.*** `src_colorize()` = `src_styles()` en
+=src/editor.rs= con `Lang::{Python, Bash, Rust, C, Js, Other}=: keywords,
+builtins, decoradores, tipos, funciones, cadenas (incluidas las multilínea
+"""…""" de python), comentarios, números, preprocesador de C, lifetimes de
+rust. Se aplica sólo a las líneas visibles de cada frame y el estado del
+bloque se rastrea hacia atrás con =src_state_at()= (un frame que empieza a
+mitad de un bloque pinta bien — el código anterior tenía ese bug).
+
+*Problema (original):* los bloques =#+BEGIN_SRC= se pintaban de *gris
+plano* (metadata magenta, delimitadores gris); el contenido no tenía
+resaltado sintáctico. Para el uso principal de =pigmacs= (escribir org con
+código dentro) es la mejora de legibilidad con más relación
+coste/beneficio.
 
 *Propuesta:* resaltado por lenguaje sobre las líneas visibles, sin parser
 externo (regex por línea + estado de bloque multi-línea para cadenas):
@@ -163,11 +172,19 @@ externo (regex por línea + estado de bloque multi-línea para cadenas):
 - *Esfuerzo:* mediano (1 sesión): 1 sesión de tablas + integración con los
   estilos org existentes (cabeceras cyan/verde/amarillo, TODO rojo…).
 
-** TODO [#A] Entrada libre en el menú de programas (fuzzy)
+** DONE [#A] Entrada libre en el menú de programas (fuzzy)
 
-*Problema:* el menú sólo ofrece la lista fija =MENU=. Si el programa no
-está en esa lista (p. ej. =watch=, =yazi=, =iotop=) no hay forma de
-lanzarlo.
+*Estado (v3.1.0):* ***entregado.*** Escribir en el menú filtra con
+subsecuencia difusa (=htp= → =htop=) y la lista se reduce en pantalla
+(=▸ htop=); =Esc= limpia el filtro y =Esc= de nuevo cierra; =Enter= sin
+coincidencias lanza lo tecleado *tal cual* (split por espacios →
+=launch_program=). Con el filtro vacío =j=/=k= navegan (compatibilidad con
+los atajos de siempre); una vez empiezas a filtrar, =j=/=k= son letras y
+la navegación pasa a =↑↓=. El pie del menú avisa de =Enter lanza «…»=.
+
+*Problema (original):* el menú sólo ofrecía la lista fija =MENU=. Si el
+programa no estaba en esa lista (p. ej. =watch=, =yazi=, =iotop=) no había
+forma de lanzarlo.
 
 *Propuesta:* al abrir =Ctrl+P=, empezar a teclear *filtra* las entradas
 (sustring difuso: =htp= → =htop=); si no hay coincidencias y se pulsa
@@ -226,11 +243,17 @@ readline/subir en la terminal) y del tree. Clic en el tree abre el fichero.
   conviene un ajuste (=scroll sin mantener Shift=) o activarlo opcional.
 - *Esfuerzo:* mediano.
 
-** TODO [#C] Aviso de fin de la IA (bell / cambio de color)
+** DONE [#C] Aviso de fin de la IA (bell / cambio de color)
 
-Si la consulta a =opencode= tarda, no hay forma de saber cuándo terminó sin
-mirar. Propuesta: =ESC[7= (bell) al terminar + el label del panel en
-verde/rojo según estado, ya visible en la barra de ayuda.
+*Estado (v3.1.0):* ***entregado.*** =app.bell= se pone en =ai_flush()= y
+=draw()= emite =ESC[7= (BEL) tras el diff del frame — así el byte de
+control sale por el mismo sitio que el resto de la salida (regla de
+render_frame). La cabecera del panel lleva banda de color según el estado:
+amarillo mientras procesa, verde si hay respuesta, acento en reposo.
+
+*Propuesta original:* si la consulta a =opencode= tarda, no hay forma de
+saber cuándo terminó sin mirar. =ESC[7= (bell) al terminar + el label del
+panel en verde/rojo según estado, ya visible en la barra de ayuda.
 
 - *Riesgo:* nulo · *Esfuerzo:* mínimo.
 
@@ -332,10 +355,36 @@ cargo build
 python3 tests/test_partA.py && python3 tests/smoke_fase1.py && python3 tests/test_fase2.py
 #+END_SRC
 
-Estado: *75/75 en verde*.
+Estado: *87/87 en verde*.
 
 * 6. Estado de los commits
 
 - Fase 1 (atajos dos grupos): *commiteada* — =ae18ae7=.
-- Arreglos 1.2–1.5, fase 2 y este informe: *pendientes de tu OK* (también el
-  README actualizado y las suites de tests).
+- Arreglos 1.2–1.5, fase 2 y este informe: *commiteados*.
+- Cabeceras + LICENSE (MIT) + bump 3.0.1: *commiteado* — =2a6e4e8=.
+- *v3.1.0 — ronda de elegancia y pendientes #A/#C*: en local.
+  =theme.rs= (paleta semántica de16 colores), píldora de modo + identidad
+  y posición en el status, barra de ayuda con teclas en color, ayuda F1
+  coloreada por secciones, bordes/separadores con acento, tree con banda de
+  cabecera y ★ visible en los marcados, selecciones con fondo de acento,
+  resaltado de sintaxis en bloques SRC, menú difuso, bell de la IA.
+  *Nota:* se detectó y arregló un pánico por resta sin saturar en
+  =draw_keybar= que rompía el smoke tras un resize (modo debug).
+
+* 7. Rediseño visual «tty puro» (v3.1.0)
+
+Todo aplica a *tty real*: sólo los16 colores ANSI y glifos presentes en la
+fuente de la consola (─│┌┐└┘├┤▸★●·⋯). Sin dependencias nuevas.
+
+| elemento                        | antes                       | ahora                                        |
+|-----------------------------+-----------------------------+----------------------------------------------|
+| barra de estado             | texto plano                 | píldora de modo en color · ● rojo de cambios · =pigmacs v3.1.0 │ fichero │ f:c= a la derecha |
+| barra de ayuda              | gris plano                  | teclas en cyan bold, descripciones en gris   |
+| ayuda F1                    | blanco plano                | títulos de sección cyan, teclas amarillo, texto blanco |
+| bordes/separadores          | default / gris              | acento cyan (=theme::ACCENT=)                |
+| cabeceras de panel (tree/IA)| vídeo inverso genérico      | banda de color con estado                    |
+| selecciones                 | =reverse=                   | fondo de acento (=ACCENT_HI=)                |
+| tree                        | ficheros grises             | dirs amarillo, ficheros blanco, ★ en los marcados y contador ★N en la cabecera |
+| cursor del editor           | vídeo inverso               | celda en acento cyan                         |
+| resaltado en =#+BEGIN_SRC=  | gris plano                  | keywords/cadenas/comentarios/números por lenguaje |
+| menú Ctrl+P                 | lista fija                  | difuso + lanzado libre + sombra + borde de acento |

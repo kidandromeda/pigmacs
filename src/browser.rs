@@ -1,11 +1,12 @@
 // ————— pigmacs · navegador de ficheros (tree) —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.0.1
-// Fecha:      2026-10-13
+// Versión:    3.1.0
+// Fecha:      2026-10-14
 use crate::{
     app::{App, Mode},
-    frame::{Frame, Style},
+    frame::Frame,
+    theme::*,
 };
 use crossterm::{
     event::{KeyCode, KeyEvent, KeyModifiers},
@@ -106,10 +107,16 @@ pub(crate) fn handle_browser_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('b') => {
             if let Some(pos) = app.bookmarks.iter().position(|p| p == &app.browser.cwd) {
                 app.bookmarks.remove(pos);
-                app.status = "Directorio desmarcado".into();
+                app.status = format!(
+                    "☆ Directorio desmarcado · quedan {}",
+                    app.bookmarks.len()
+                );
             } else {
                 app.bookmarks.push(app.browser.cwd.clone());
-                app.status = format!("Marcado: {}", app.browser.cwd.display());
+                app.status = format!(
+                    "★ Marcado · {} marcadores en total",
+                    app.bookmarks.len()
+                );
             }
         }
         KeyCode::Char('B') => {
@@ -123,7 +130,12 @@ pub(crate) fn handle_browser_key(app: &mut App, k: KeyEvent) {
                 };
                 let dir = app.bookmarks[next].clone();
                 app.browser.cd(dir);
-                app.status = format!("Marcador: {}", app.browser.cwd.display());
+                app.status = format!(
+                    "★ Marcador {}/{} · {}",
+                    next + 1,
+                    app.bookmarks.len(),
+                    app.browser.cwd.display()
+                );
             }
         }
         KeyCode::Esc => {
@@ -134,7 +146,8 @@ pub(crate) fn handle_browser_key(app: &mut App, k: KeyEvent) {
 }
 
 pub(crate) fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
-    // cabecera con el directorio actual; pista de cómo enfocarlo si no lo está
+    // cabecera con banda de color: directorio actual, ★ si está marcado y
+    // contador de marcadores a la derecha (el objetivo de b/B, siempre visible)
     let dirname = app
         .browser
         .cwd
@@ -142,50 +155,76 @@ pub(crate) fn draw_browser(app: &mut App, bx: u16, h: u16, fr: &mut Frame) {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| app.browser.cwd.display().to_string());
     let starred = app.bookmarks.iter().any(|p| p == &app.browser.cwd);
-    let title: String = if app.mode == Mode::Browser {
-        format!("┌ {} {} ", dirname, if starred { "★" } else { "" })
-    } else {
-        format!("┌ {} {} · Ctrl+F ", dirname, if starred { "★" } else { "" })
+    let marks_n = app.bookmarks.len();
+    let band_st = band(ACCENT, FG);
+    for x in 0..bx {
+        fr.put(x, 0, ' ', band_st);
     }
-    .chars()
-    .take(bx.saturating_sub(1) as usize)
-    .collect();
-    fr.text(0, 0, &title, Style { reverse: true, ..Default::default() });
+    let mut title = format!("┌ {dirname}");
+    if starred {
+        title.push_str(" ★");
+    }
+    if app.mode != Mode::Browser {
+        title.push_str(" · Ctrl+F ");
+    }
+    let title: String = title.chars().take(bx.saturating_sub(1) as usize).collect();
+    fr.text(0, 0, &title, pill(ACCENT, FG));
+    if marks_n > 0 {
+        let right = format!("★{marks_n} ");
+        let rw = right.chars().count() as u16;
+        if bx > rw + 2 {
+            fr.text(bx - rw, 0, &right, bold(WARN));
+        }
+    }
 
     let rows = h.saturating_sub(3) as usize; // filas 1..h-3 (deja la ayuda y el estado)
     let start = app.browser.scroll.min(app.browser.entries.len());
     let end = (start + rows).min(app.browser.entries.len());
     let name_w = bx.saturating_sub(3) as usize;
+    let border = fg(ACCENT);
 
     for (i, e) in app.browser.entries[start..end].iter().enumerate() {
         let y = 1 + i as u16;
         let sel = start + i == app.browser.cursor;
+        let marked = app.bookmarks.iter().any(|p| p == e);
         let name = e
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let icon = if e.is_dir() { "▸" } else { "·" };
-        let text: String = format!(" {} {}", icon, name);
+        let mut text = format!(" {} {}", icon, name);
+        if marked {
+            text.push_str(" ★");
+        }
+        let star_pos = if marked { text.chars().count() - 1 } else { 0 };
         let text: String = text.chars().take(name_w).collect();
         let hidden = name.starts_with('.');
         let st = if sel {
-            Style { reverse: true, ..Default::default() }
+            // selección con fondo de acento (no vídeo inverso genérico)
+            band(ACCENT_HI, Color::Black)
         } else if hidden {
-            // ocultos: atenuados para distinguirlos
-            Style { fg: Some(Color::DarkGrey), ..Default::default() }
+            fg(DIM)
         } else if e.is_dir() {
-            Style { fg: Some(Color::DarkYellow), ..Default::default() }
+            if marked {
+                bold(DIR)
+            } else {
+                fg(DIR)
+            }
         } else {
-            Style { fg: Some(Color::DarkGrey), ..Default::default() }
+            fg(FILE)
         };
         fr.text(0, y, &text, st);
+        // la ★ del directorio marcado, en su propio color de acento
+        if marked && !sel && star_pos < text.chars().count() {
+            fr.put(star_pos as u16, y, '★', bold(ACCENT_HI));
+        }
         // separador vertical
-        fr.put(bx - 1, y, '│', Style::default());
+        fr.put(bx - 1, y, '│', border);
     }
 
     // rellenar el resto de filas con el separador
     for y in (1 + (end - start) as u16)..h.saturating_sub(2) {
-        fr.put(bx - 1, y, '│', Style::default());
+        fr.put(bx - 1, y, '│', border);
     }
 
     // si el cursor se sale de la ventana, ajustar scroll (se hace en cada frame)

@@ -1,8 +1,8 @@
 // ————— pigmacs · estado central —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.0.1
-// Fecha:      2026-10-13
+// Versión:    3.1.0
+// Fecha:      2026-10-14
 use crate::{
     browser::Browser,
     frame::{strip_ansi, Frame},
@@ -96,9 +96,14 @@ pub(crate) struct App {
     pub(crate) program: Option<Program>,
     pub(crate) menu_open: bool,
     pub(crate) menu_cursor: usize,
+    // filtro del menú Ctrl+P: escribir filtra (difuso), Enter lanza
+    // lo tecleado si no hay coincidencias
+    pub(crate) menu_query: String,
     // consola de texto real (/dev/ttyN): saneado de avisos del kernel
     pub(crate) vt_mode: bool,
     pub(crate) force_full: bool, // repintar todas las celdas en el próximo draw
+    // bell pendiente de emitir (fin de la consulta IA): lo escribe draw()
+    pub(crate) bell: bool,
 }
 
 impl App {
@@ -902,6 +907,8 @@ impl App {
         self.ai_lines.push(String::new());
         self.ai_running = false;
         self.status = format!("IA: {} caracteres", out.len());
+        // bell: avisa de que terminó sin tener que mirar el panel
+        self.bell = true;
         self.redraw = true;
     }
 

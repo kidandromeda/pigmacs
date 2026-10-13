@@ -1,11 +1,12 @@
 // ————— pigmacs · panel de IA —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.0.1
-// Fecha:      2026-10-13
+// Versión:    3.1.0
+// Fecha:      2026-10-14
 use crate::{
     app::App,
     frame::{Frame, Style, strip_ansi},
+    theme::*,
 };
 use crossterm::{
     event::{KeyCode, KeyEvent, KeyModifiers},
@@ -83,16 +84,31 @@ pub(crate) fn handle_ai_key(app: &mut App, k: KeyEvent) {
 }
 
 pub(crate) fn draw_ai_pane(app: &App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
+    // cabecera con banda de color según el estado: amarillo mientras
+    // consulta, verde si hay respuesta, acento si está en reposo
+    let (band_bg, band_fg) = if app.ai_running {
+        (WARN, Color::Black)
+    } else if !app.ai_lines.is_empty() {
+        (OK, Color::White)
+    } else {
+        (ACCENT, Color::White)
+    };
     let title = if app.ai_running {
         " IA · pi · procesando…"
-    } else {
+    } else if app.ai_lines.is_empty() {
         " IA · pi · escribe tu pregunta y pulsa Enter (Esc cancela)"
+    } else {
+        " IA · pi · Enter nueva pregunta (↑ historial · v seleccionar)"
     };
+    let band_st = band(band_bg, band_fg);
+    for x in bx..bx + area_w {
+        fr.put(x, 0, ' ', band_st);
+    }
     fr.text(
         bx,
         0,
         &title.chars().take(area_w as usize).collect::<String>(),
-        Style { reverse: true, ..Default::default() },
+        pill(band_bg, band_fg),
     );
 
     let mut all: Vec<String> = app.ai_lines.clone();
@@ -116,19 +132,25 @@ pub(crate) fn draw_ai_pane(app: &App, editor_rows: u16, bx: u16, area_w: u16, fr
                 i >= r1 && i <= r2
             });
         let st = if selected {
-            Style { reverse: true, ..Default::default() }
+            band(ACCENT_HI, Color::Black)
         } else if app.ai_selecting && i == cur {
-            Style { fg: Some(Color::DarkYellow), ..Default::default() }
+            fg(WARN)
         } else {
-            Style::default()
+            fg(FG)
         };
         fr.text(bx, 1 + i as u16, &clean, st);
     }
 
+    // campo de entrada: prompt en acento y texto en blanco
     let input_row = editor_rows.saturating_sub(1);
-    let input_text: String = format!("> {}", app.ai_input)
+    for c in 0..area_w.saturating_sub(1) {
+        fr.put(bx + c, input_row, ' ', Style::default());
+    }
+    fr.text(bx, input_row, "> ", bold(ACCENT_HI));
+    let input_text: String = app
+        .ai_input
         .chars()
-        .take(area_w.saturating_sub(1) as usize)
+        .take(area_w.saturating_sub(3) as usize)
         .collect();
-    fr.text(bx, input_row, &input_text, Style::default());
+    fr.text(bx + 2, input_row, &input_text, fg(FG));
 }

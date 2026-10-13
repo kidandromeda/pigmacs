@@ -2,8 +2,8 @@
 # ————— pigmacs · tests · utilidades comunes (harness PTY + mini-emulador VT100) —————
 # Autor:      kidandromeda
 # Licencia:   MIT
-# Versión:    3.0.1
-# Fecha:      2026-10-13
+# Versión:    3.1.0
+# Fecha:      2026-10-14
 """Utilidades comunes para los tests PTY de pigmacs.
 
 Screen = mini-emulador VT100 (CUP, CR/LF/BS, EL, ED, SGR ignorado) que

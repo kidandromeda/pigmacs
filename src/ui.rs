@@ -1,8 +1,8 @@
 // ————— pigmacs · render: dibujo del frame completo —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.0.1
-// Fecha:      2026-10-13
+// Versión:    3.1.0
+// Fecha:      2026-10-14
 use crate::{
     ai::draw_ai_pane,
     app::{layout, App, Mode},
@@ -11,6 +11,7 @@ use crate::{
     frame::{render_frame, Frame, Style},
     program::draw_menu,
     shell::draw_shell_output,
+    theme::*,
 };
 use anyhow::Result;
 use crossterm::{
@@ -94,13 +95,18 @@ TERMINAL
 TREE DE FICHEROS
   j k                 mover · l/Enter abrir · h subir
   g / G               principio / fin
-  b                   marcar/desmarcar el directorio actual
-  B                   saltar al siguiente marcador (★ en el título)
+  b                   marcar/desmarcar el directorio actual (★)
+  B                   saltar al siguiente marcador (★N en la cabecera)
   Esc                 volver al editor (el tree sigue visible)
+  los directorios marcados se ven con ★ en el árbol y la cabecera
+  cuenta cuántos hay (★3); sirven para saltar por tus sitios
   el cwd del proceso sigue al tree: gdu, ncdu… arrancan en el dir mirado
 
 PROGRAMAS EN LA VENTANA PRINCIPAL (Ctrl+P)
+  escribir            filtra el menú (difuso): "htp" encuentra htop;
+                      Esc limpia el filtro y Esc de nuevo cierra
   j k / ↑↓            mover por el menú · Enter lanzar · Esc/q cerrar
+  Enter sin matches   lanza lo tecleado tal cual (watch, yazi, iotop…)
   (sólo aparecen los instalados en el PATH: htop, btop, fastfetch,
    ncdu, gdu, nmtui, ranger, Midnight Commander, gitui, tmux, neovim,
    bluetui, jeeves, lynx, w3m)
@@ -129,6 +135,15 @@ GUARDAR · SUDO
   Ctrl+S              guardar; si el fichero es de root pide contraseña
   (en el prompt sudo: Enter acepta, Esc/Ctrl+C cancela)
 
+COLOR · ASPECTO (tty real, 16 colores)
+  la barra inferior lleva el modo en una píldora de color y, a la
+  derecha, el fichero y la posición; encima, la ayuda del modo activo
+  cabeceras org: nivel 1 cyan · 2 verde · 3 amarillo · más magenta
+  TODO rojo · DONE verde · bloques #+BEGIN_SRC con resaltado de
+  sintaxis (python, bash, rust, c, js: keywords, cadenas, comentarios)
+  la IA avisa con un bell al terminar la consulta y su cabecera
+  cambia de color según el estado (amarillo = procesando, verde = ok)
+
 GENERAL
   Ctrl+Q              salir (avisa si hay cambios sin guardar)
   Ctrl+S              guardar
@@ -144,15 +159,105 @@ pub(crate) fn draw_help(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, f
     let end = (start + max).min(lines.len());
     for (i, l) in lines[start..end].iter().enumerate() {
         let clean: String = l.chars().take(area_w as usize).collect();
-        let st = if i == 0 {
-            Style {
-                bold: true,
-                ..Default::default()
+        // título · separador decorativo · sección · tecla+descripción
+        if i == 0 {
+            fr.text(bx, i as u16, &clean, bold(ACCENT_HI));
+            continue;
+        }
+        if clean.starts_with('═') {
+            fr.text(bx, i as u16, &clean, fg(ACCENT));
+            continue;
+        }
+        if !clean.starts_with(' ') {
+            // cabecera de sección (sin sangría, en mayúsculas)
+            fr.text(bx, i as u16, &clean, bold(ACCENT_HI));
+            continue;
+        }
+        // línea con sangría: la tecla (hasta la primera doble separación)
+        // en color y la descripción en gris, legible de un vistazo
+        let bytes = clean.as_bytes();
+        let indent = bytes.iter().take_while(|&&b| b == b' ').count();
+        let mut key_end = bytes.len();
+        if indent < bytes.len() {
+            let mut seen_gap = false;
+            let mut j = indent;
+            while j < bytes.len() {
+                if bytes[j] == b' ' {
+                    if seen_gap {
+                        key_end = j;
+                        break;
+                    }
+                    // doble espacio = fin de la columna de teclas
+                    if j + 1 < bytes.len() && bytes[j + 1] == b' ' {
+                        key_end = j;
+                        break;
+                    }
+                    seen_gap = true;
+                } else {
+                    seen_gap = false;
+                }
+                j += 1;
             }
-        } else {
-            Style::default()
+        }
+        // cortar siempre en frontera de char (HELP_TEXT tiene ←↓↑→, ★…)
+        while key_end > 0 && !clean.is_char_boundary(key_end) {
+            key_end -= 1;
+        }
+        let (key, desc) = clean.split_at(key_end);
+        fr.text(bx, i as u16, key, fg(WARN));
+        fr.text(
+            bx + key.chars().count() as u16,
+            i as u16,
+            desc,
+            fg(FG),
+        );
+    }
+}
+
+/// barra de ayuda inferior: la tecla de cada trozo en acento y la
+/// descripción en gris — la ayuda del modo activo, siempre visible.
+/// Todos los cálculos van con saturating_sub: en modo debug un
+/// `limit - cx` negativo sería un pánico (rompió el smoke al hacer resize)
+fn draw_keybar(fr: &mut Frame, x: u16, y: u16, s: &str, w: u16) {
+    let mut cx = x;
+    let limit = w;
+    for (i, raw) in s.split('·').enumerate() {
+        if cx >= limit {
+            break;
+        }
+        if i > 0 {
+            if limit.saturating_sub(cx) < 2 {
+                break;
+            }
+            fr.text(cx, y, "· ", fg(DIM));
+            cx += 2;
+            if cx >= limit {
+                break;
+            }
+        }
+        let part = if i == 0 { raw } else { raw.trim_start() };
+        let (head, rest) = match part.find(' ') {
+            Some(p) => part.split_at(p),
+            None => (part, ""),
         };
-        fr.text(bx, i as u16, &clean, st);
+        // "escribe", "teclas", "historial"… son descripciones, no teclas
+        let es_descripcion =
+            head.chars().all(|c| c.is_alphabetic()) && head.chars().count() >= 4;
+        let st = if es_descripcion { fg(DIM) } else { bold(ACCENT_HI) };
+        let head: String = head
+            .chars()
+            .take(limit.saturating_sub(cx) as usize)
+            .collect();
+        fr.text(cx, y, &head, st);
+        cx = cx.saturating_add(head.chars().count() as u16);
+        if !rest.is_empty() && cx < limit {
+            let rest: String = rest
+                .chars()
+                .take(limit.saturating_sub(cx) as usize)
+                .collect();
+            fr.text(cx, y, &rest, fg(DIM));
+            cx = cx.saturating_add(rest.chars().count() as u16);
+        }
     }
 }
 
@@ -218,27 +323,47 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
     }
 
     // separador del shell (solo a la derecha del navegador)
-    fr.text(bx, shell_top, &"─".repeat(area_w as usize), Style::default());
+    fr.text(
+        bx,
+        shell_top,
+        &"─".repeat(area_w as usize),
+        fg(ACCENT),
+    );
 
     // salida del shell: últimas líneas con colores ANSI y \r/\b interpretados
     let max_rows = h.saturating_sub(4).saturating_sub(shell_top) as usize;
     let available = (shell_rows.saturating_sub(2) as usize).min(max_rows);
     draw_shell_output(app, &mut fr, bx, shell_top + 1, available as u16, area_w);
 
-    let mode = match app.mode {
-        Mode::Normal => "NORMAL",
-        Mode::Insert => "INSERT",
-        Mode::Visual => "VISUAL",
-        Mode::Shell => "SHELL ",
-        Mode::Ai => "AI    ",
-        Mode::Browser => "BROWSE",
-        Mode::Program => "PROG  ",
+    // ---------- barra de estado: píldora del modo · aviso · identidad y
+    // posición a la derecha (siempre visibles, estilo btop) ----------
+    let (mode, pill_bg, pill_fg) = match app.mode {
+        Mode::Normal => ("NORMAL", Color::Blue, Color::White),
+        Mode::Insert => ("INSERT", Color::Green, Color::Black),
+        Mode::Visual => ("VISUAL", Color::Magenta, Color::White),
+        Mode::Shell => ("SHELL", Color::DarkCyan, Color::White),
+        Mode::Ai => ("AI", Color::DarkMagenta, Color::White),
+        Mode::Browser => ("BROWSE", Color::DarkBlue, Color::White),
+        Mode::Program => ("PROG", Color::DarkRed, Color::White),
     };
+    let mut x = 0u16;
+    let pill_text = format!(" {mode} ");
+    for ch in pill_text.chars() {
+        fr.put(x, status_y, ch, pill(pill_bg, pill_fg));
+        x += 1;
+    }
+    // cambios sin guardar: punto rojo (o espacio para el separador)
+    fr.put(
+        x,
+        status_y,
+        if app.dirty { '●' } else { ' ' },
+        if app.dirty { bold(ERR) } else { Style::default() },
+    );
+    x += 1;
 
-    let dirty = if app.dirty { " [+]".to_string() } else { String::new() };
-    // truncar a ancho de pantalla: si la barra de estado desborda, el terminal
-    // hace wrap, scrollea el frame una fila y el cursor queda desplazado
-    let status_text: String = if app.sudo_prompt {
+    // texto editable en status: contraseña sudo o búsqueda (con su cursor)
+    // o el mensaje del programa
+    let msg: String = if app.sudo_prompt {
         format!(
             "Contraseña sudo ({}): {}",
             app.path.display(),
@@ -247,20 +372,68 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
     } else if app.searching {
         format!("/{}", app.search_query)
     } else {
-        format!(" {}{}  {}", mode, dirty, app.status)
+        format!("{}", app.status)
+    };
+
+    // información de la derecha: identidad · fichero · posición
+    let right: Vec<(String, Style)> = if app.sudo_prompt || app.searching {
+        Vec::new()
+    } else {
+        let file = app
+            .path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let pos = match app.mode {
+            Mode::Normal | Mode::Insert | Mode::Visual => {
+                format!("{}:{}", app.row + 1, app.col + 1)
+            }
+            Mode::Browser => format!(
+                "{}/{}",
+                app.browser.cursor + 1,
+                app.browser.entries.len().max(1)
+            ),
+            _ => String::new(),
+        };
+        let mut v = vec![
+            (
+                format!("pigmacs v{}", env!("CARGO_PKG_VERSION")),
+                bold(ACCENT_HI),
+            ),
+            ("│".to_string(), fg(ACCENT)),
+            (file, fg(DIM)),
+        ];
+        if !pos.is_empty() {
+            v.push(("│".to_string(), fg(ACCENT)));
+            v.push((pos, fg(DIM)));
+        }
+        v
+    };
+    let right_w: u16 = 1
+        + right
+            .iter()
+            .map(|(s, _)| s.chars().count() as u16 + 1)
+            .sum::<u16>();
+
+    // el aviso se recorta si hace falta: la identificación de la derecha
+    // (fichero y posición) es información siempre útil, estilo btop
+    let free = w.saturating_sub(right_w).saturating_sub(x);
+    let shown: String = msg.chars().take(free as usize).collect();
+    fr.text(x, status_y, &shown, fg(FG));
+    let cur_x = x + shown.chars().count() as u16;
+    let mut rx = w.saturating_sub(right_w).saturating_add(1);
+    for (s, st) in &right {
+        fr.text(rx, status_y, &s, *st);
+        rx += s.chars().count() as u16 + 1;
     }
-    .chars()
-    .take(w as usize)
-    .collect();
-    fr.text(0, status_y, &status_text, Style::default());
 
     // barra de ayuda permanente: atajos del modo activo, siempre visibles
     let help = match app.mode {
         Mode::Normal | Mode::Insert | Mode::Visual => {
-            "Ctrl+F tree · Ctrl+T terminal · i · u deshacer · Ctrl+R rehacer · Tab/za plegar · m marca · F1/? ayuda · Ctrl+E enviar · Ctrl+S · Ctrl+Q"
+            "i · u deshacer · Ctrl+R rehacer · Tab plegar · Ctrl+F tree · Ctrl+T terminal · Ctrl+E enviar · Ctrl+S guardar · F1 ayuda · Ctrl+Q salir"
         }
         Mode::Browser => {
-            "j/k mover · l/h entrar/subir · b marca · B saltar · g/G extremos · Esc editor · Ctrl+F ocultar"
+            "j/k mover · l/h entrar/subir · b marca ★ · B saltar por marcados · g/G extremos · Esc editor · Ctrl+F ocultar"
         }
         Mode::Ai => {
             "Enter enviar · ↑/↓ historial · v seleccionar · Ctrl+E enviar · Ctrl+N nueva · Esc cancelar · Tab shell"
@@ -272,15 +445,12 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
             "teclas al programa · Ctrl+P menú · Ctrl+G cerrar · Ctrl+J editor · Ctrl+Q salir"
         },
     };
-    let help_text: String = help.chars().take(w as usize).collect();
-    fr.text(
+    draw_keybar(
+        &mut fr,
         0,
-        status_y - 1,
-        &help_text,
-        Style {
-            fg: Some(Color::DarkGrey),
-            ..Default::default()
-        },
+        status_y.saturating_sub(1),
+        help,
+        w,
     );
 
     // cursor bloque del editor: celda en vídeo inverso dentro del frame
@@ -296,18 +466,19 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
             .get(app.row)
             .and_then(|l| l.chars().nth(app.col))
             .unwrap_or(' ');
-        let (fg, bold) = match org_line_style(app, app.row) {
-            Some((c, b)) => (Some(c), b),
-            None => (None, false),
+        let bold = match org_line_style(app, app.row) {
+            Some((_, b)) => b,
+            None => false,
         };
+        // cursor del modo: celda en color de acento dentro del frame
         fr.put(
             x,
             y,
             ch,
             Style {
-                fg,
+                fg: Some(Color::Black),
+                bg: Some(ACCENT_HI),
                 bold,
-                reverse: true,
                 ..Default::default()
             },
         );
@@ -317,10 +488,14 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
     let force = std::mem::take(&mut app.force_full);
     render_frame(&mut app.prev, &fr, &mut out, force)?;
 
+    // bell pendiente (fin de la consulta IA): suena en la tty sin mirar
+    if std::mem::take(&mut app.bell) {
+        queue!(out, crossterm::style::Print('\x07'))?;
+    }
+
     // cursor real del terminal según el modo
     if app.sudo_prompt || app.searching {
-        let prompt_len = status_text.chars().count() as u16;
-        queue!(out, Show, MoveTo(prompt_len, status_y))?;
+        queue!(out, Show, MoveTo(cur_x.min(w.saturating_sub(1)), status_y))?;
     } else if app.mode == Mode::Ai {
         let input_row = editor_rows.saturating_sub(1);
         let x = (bx + (2 + app.ai_input.chars().count()) as u16).min(area_w.saturating_sub(1));

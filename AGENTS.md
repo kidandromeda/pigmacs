@@ -50,9 +50,10 @@ python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize�
 | `term.rs` | 679 | `Term` + `PState`: emulador VT100 completo (`feed`, `parse_sgr`, scroll, alt screen, línea de comandos…), `draw()` |
 | `shell.rs` | 316 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `csi_shell`, `draw_shell_output`, `resize` |
 | `program.rs` | 222 | `Program` (PTY del programa), `MENU` (15 entradas: nombre visible + argv), `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
-| `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` |
+| `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` + **resaltado de sintaxis** de bloques SRC (`src_styles`, `lang_of`, `src_state_at`) |
 | `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd` **arrastra el cwd del proceso**, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
+| `theme.rs` | 110 | **paleta semántica única** (16 colores ANSI): `ACCENT/FG/DIM/SYNTAX_*` + helpers `fg()`, `bold()`, `pill()`, `band()`. Todo el pintado pasa por aquí |
 
 Notas del split (v2.0.0): se partió un `main.rs` de 4016 líneas. Toda la
 visibilidad entre módulos es `pub(crate)` **a propósito**; `main.rs` importa
@@ -126,11 +127,12 @@ Reglas críticas que **no se deben romper**:
 - `tests/` — `ptylib.py` (harness PTY + emulador), `test_partA.py`,
   `smoke_fase1.py`, `test_fase2.py`.
 
-## Plan de fase 3 (pendiente): rediseño visual «tty puro»
+## Plan de fase 3 (rediseño visual «tty puro») — entregado en v3.1.0
 
-El usuario lo pidió el 2026-10-13 y aún no se ha tocado código de esta fase.
-Objetivo: que pigmacs sea *bonita*, con la elegancia que se puede lograr en
-una **tty real de 16 colores**.
+El usuario lo pidió el 2026-10-13; **v3.1.0 cumple la mayor parte** (ver
+§7 del `informe_ux_terminal.org` y el *Estado* de abajo). Objetivo:
+que pigmacs sea *bonita*, con la elegancia que se puede lograr en una
+**tty real de 16 colores**.
 
 **Restricciones duras (decisión del usuario):**
 
@@ -148,38 +150,54 @@ una **tty real de 16 colores**.
   compatible, pero **no romper** cadenas asumidas por los tests
   (`NORMAL`, `▸ htop`, `▸ ranger`, mensajes de status…).
 
-**Parte A — elegancia (render):**
+**Parte A — elegancia (render): estado en v3.1.0**
 
-1. `src/theme.rs`: paleta **semántica única** en 16 colores (acento, ok,
-   error, aviso, dim, borde, selección, cabeceras org por nivel…). Todo el
-   pintado pasa por ella; eliminar colores sueltos repartidos por módulos.
-2. **Barra superior** (fila 0): identidad `pigmacs`, fichero abierto,
-   indicador de cambios (`●`), y **píldora de modo con color de fondo**
-   (NORMAL/INSERT/VISUAL/…). Restar una fila del layout del editor.
-3. Bordes y separadores con color de acento tenue; popup del menú con borde
-   + **soma simulada** (celdas en bg oscuro desplazadas 1×1, se ve en tty).
-4. Barra de estado: píldora de modo, ruta y posición `(f,c)` alineada a la
-   derecha; barra de ayuda con **teclas en color y descripciones dim**.
-5. Editor: selección con **fondo de acento** (no `reverse`), números de
-   línea dim, marcador de pliegue tipo `⋯ n↓`, cursor del modo en color.
-6. Tree: cabecera con título, icono/dir en color, selección con acento,
-   ocultos dim.
-7. Panel IA y menú Ctrl+P con la misma lengua visual que el resto.
+1. ✅ `src/theme.rs`: paleta **semántica única** en 16 colores. Todo el
+   pintado pasa por ella; ya no hay colores sueltos por módulo.
+2. ❌ **Barra superior** (fila 0): **no se hizo así** — la identidad
+   `pigmacs vN │ fichero │ f:c` vive en la **barra de estado** (derecha),
+   para no restar una fila al editor. Si se quiere una cabecera de verdad
+   hay que ajustar `layout()`, `draw_browser`/`draw_ai_pane` (pintan en la
+   fila 0) y el resize del PTY del programa.
+3. ✅ Bordes y separadores con acento; popup del menú con borde y sombra.
+4. ✅ Barra de estado: píldora de modo con color de fondo, `●` de cambios
+   y fichero/posición a la derecha; barra de ayuda con **teclas en color y
+   descripciones dim**.
+5. ✅ Editor: selección con **fondo de acento** (no `reverse`), números de
+   línea dim, marcador de pliegue en color, cursor del modo en acento.
+6. ✅ Tree: cabecera con banda de color e `★N`, directorios en color,
+   selección con acento, ocultos dim.
+7. ✅ Panel IA y menú Ctrl+P con la misma lengua visual.
 
-**Parte B — funcional (informe §3, prioridad #A):**
+**Parte B — funcional (informe §3):**
 
-8. **Resaltado de sintaxis** en bloques `#+BEGIN_SRC` (`src_colorize()` en
-   `editor.rs`, sólo líneas visibles): python, bash/sh, rust, c/cpp, js/ts
-   y fallback (números, cadenas, comentarios). Ver §3 del informe.
-9. **Menú difuso**: escribir en el menú filtra (`htp` → `htop`); Enter
-   lanza lo tecleado tal cual si no hay coincidencia. Ver §3 del informe.
+8. ✅ **Resaltado de sintaxis** en bloques `#+BEGIN_SRC` (`src_styles()`,
+   `lang_of()`, `src_state_at()` en `editor.rs`, sólo líneas visibles):
+   python, bash/sh, rust, c/cpp, js/ts y fallback (números, cadenas,
+   comentarios). Ver §3 del informe.
+9. ✅ **Menú difuso**: escribir filtra (`htp` → `htop`); Enter lanza lo
+   tecleado tal cual si no hay coincidencia. Ver §3 del informe.
+   (+ bell y banda de estado de la IA, §3 #C.)
 
 **Definición de hecho:** `cargo build` 0 warnings + 87/87 checks en verde
-+ comprobación **en una consola VT real** (no en xterm) antes de commit;
-después actualizar `HELP_TEXT`, README e informe si cambia la UI.
+antes de commit; la comprobación **en una consola VT real** (no en xterm)
+está pendiente de que la haga el usuario (el agente no tiene acceso a
+`/dev/ttyN`). `HELP_TEXT`, README e informe se actualizaron en v3.1.0.
 
-## Estado (2026-10-13)
+## Estado (2026-10-14)
 
+- **v3.1.0 — ronda de elegancia + pendientes #A/#C del informe**:
+  `theme.rs` (paleta semántica de 16 colores, todo el pintado pasa por
+  ella) · status con píldora de modo + `●` de cambios + identidad/fichero/
+  posición a la derecha · barra de ayuda con teclas en color · ayuda F1
+  coloreada (secciones cyan, teclas amarillo) · bordes con acento · tree
+  con banda de cabecera, ★ visible en los marcados y contador `★N` ·
+  selecciones con fondo de acento (no `reverse`) · **resaltado de sintaxis
+  en bloques `#+BEGIN_SRC`** (python/bash/rust/c/js + fallback, con
+  cadenas multilínea y `src_state_at()`) · **menú difuso** (`htp`→`htop`;
+  Enter lanza lo tecleado si no hay matches) · **bell + banda de estado**
+  en el panel IA. Ojo: en modo debug las restas de índices de pantalla sin
+  `saturating_sub` son panics — `draw_keybar` ya la padeció tras un resize.
 - **v3.0.1**: cabecera estándar en los 14 ficheros de `src/` y `tests/`
   (proyecto · autor `kidandromeda` · licencia MIT · versión · fecha) +
   fichero `LICENSE` (MIT) + `authors`/`license` en `Cargo.toml`.

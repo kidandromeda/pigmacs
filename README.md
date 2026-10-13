@@ -18,7 +18,7 @@ El programa es sólo un archivo ejecutable único. En un ordenador con un SO bá
 **Requisitos:** Linux x86-64
 
 ```bash
-curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v3.0.1/pigmacs -o pigmacs && chmod +x pigmacs
+curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v3.1.0/pigmacs -o pigmacs && chmod +x pigmacs
 ./pigmacs
 ```
 
@@ -69,6 +69,9 @@ cargo build --release
 **IA** (fase 3):
 - `Ctrl+A` / `Alt+A` — alternar editor/panel IA (en el shell: `Shift+Tab` antes)
 - escribe la pregunta y pulsa `Enter` · `Esc` cancela la consulta en curso
+- la cabecera del panel cambia de color según el estado (amarillo =
+  procesando, verde = con respuesta) y al terminar suena un **bell** en la
+  terminal: no hace falta mirar el panel
 - usa `opencode run` (debe estar en el PATH)
 
 ## Atajos globales (dos grupos)
@@ -111,9 +114,13 @@ Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 (`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`,
 `Midnight Commander`, `gitui`, `tmux`, `neovim`, `bluetui`, `jeeves`,
 `lynx`, `w3m`…): `j`/`k` o flechas mueven, `Enter` lanza, `Esc`/`q` cierra.
-El menú no se abre en modo SHELL (cede a readline). `neovim` se lanza con el
-comando `nvim`; `Midnight Commander` con el comando `mc`; `lynx` y `w3m`
-arrancan en `www.duckduckgo.com`.
+
+**El menú es difuso**: en cuanto escribes, filtra las entradas
+(`htp` → `htop`); `Esc` limpia el filtro y `Esc` de nuevo cierra. Si no hay
+coincidencias, `Enter` lanza **lo tecleado tal cual** como comando
+(`watch`, `yazi`, `iotop`…). El menú no se abre en modo SHELL (cede a
+readline). `neovim` se lanza con el comando `nvim`; `Midnight Commander` con
+el comando `mc`; `lynx` y `w3m` arrancan en `www.duckduckgo.com`.
 
 - el programa corre sobre **su propio PTY** ocupando el área del editor, con un
   emulador VT100 integrado (colores 256 / truecolor, pantalla alterna, región
@@ -140,28 +147,51 @@ Al arrancar en una consola de texto (`/dev/ttyN`) pigmacs:
   borrar los avisos que el kernel haya pintado encima (sin parpadeo), y el
   status muestra el hint: `sudo dmesg -n 1`
 
-## Navegador de ficheros (v1.0.1)
+## Navegador de ficheros
 
 Columna fija a la izquierda tipo treemacs:
 - `Ctrl+F` / `Alt+F` — mostrar/foco · otra vez oculta · `Esc` foco al editor (árbol sigue visible)
 - `j`/`k` — bajar/subir · `l` — entrar en carpeta · `h` — carpeta anterior
 - `Enter` — abrir fichero en el editor · `g`/`G` — principio/fin
-- los directorios se muestran en amarillo y los ficheros en gris
+- **marcadores**: `b` marca/desmarca el directorio actual (★★★ tus sitios
+  de siempre), `B` salta al siguiente; los directorios marcados se ven con
+  `★` en el árbol, la cabecera cuenta cuántos hay (`★3`) y el status dice
+  en cuál estás (`★ Marcador 2/3 · /ruta`)
+- los directorios se muestran en amarillo, los ficheros en blanco y los
+  ocultos atenuados; la selección va con fondo de acento
 - el cwd del proceso sigue al tree: los programas del menú (`gdu`, `ncdu`…)
   arrancan en el directorio que estás mirando y el status muestra su ruta
   (la terminal interna no: `bash` se lanza al arrancar pigmacs)
 
-## Colores org (v1.0.1)
+## Colores y aspecto (v3.1.0)
+
+pigmacs se dibuja sólo con **los 16 colores ANSI** de una tty real (nada de
+truecolor ni de entorno gráfico):
+
+- **barra de estado**: el modo en una píldora de color (NORMAL azul, INSERT
+  verde, VISUAL magenta, SHELL cyan…), el punto rojo `●` si hay cambios sin
+  guardar, el aviso del programa, y a la derecha `pigmacs v3.1.0 │ fichero
+  │ fila:col` siempre visible
+- **barra de ayuda**: encima del status, los atajos del modo activo con las
+  teclas en color y las descripciones en gris; la ayuda completa (`F1`/`?`)
+  lleva las secciones en cyan y las teclas en amarillo
+- bordes y separadores con acento cyan, cabeceras de panel con banda de
+  color y selecciones con fondo de acento (no vídeo inverso)
+
+## Colores org y resaltado de código (v3.1.0)
 
 - cabeceras: nivel 1 cyan (negrita), 2 verde, 3 amarillo, más magenta
 - `TODO` rojo · `DONE` verde
-- bloques `#+BEGIN_SRC`/`#+END_SRC` magenta, contenido gris
-- metadatos `#+...` amarillo
+- metadatos `#+...` amarillo · delimitadores `#+BEGIN_SRC` magenta
+- **resaltado de sintaxis dentro de los bloques `#+BEGIN_SRC`** para
+  python, bash/sh, rust, c/cpp, js/ts (keywords en cyan, cadenas en verde,
+  números, comentarios en gris, funciones en amarillo…); los demás
+  lenguajes llevan el fallback (números, cadenas, comentarios)
 
 ## Licencia
 
 MIT — véase [LICENSE](LICENSE). Autor: **kidandromeda**.
 
 Todos los ficheros de `src/` y `tests/` llevan cabecera con autor, licencia,
-versión global (`3.0.1`) y fecha. La versión del proyecto vive en
+versión global (`3.1.0`) y fecha. La versión del proyecto vive en
 `Cargo.toml` y en los tags de git; los archivos no llevan versión propia.

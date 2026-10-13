@@ -1,8 +1,8 @@
 // ————— pigmacs · declaraciones mod · prelude · main() · run() · atajos globales —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.0.1
-// Fecha:      2026-10-13
+// Versión:    3.1.0
+// Fecha:      2026-10-14
 mod ai;
 mod app;
 mod browser;
@@ -11,6 +11,7 @@ mod frame;
 mod program;
 mod shell;
 mod term;
+mod theme;
 mod ui;
 
 use ai::*;
@@ -180,8 +181,10 @@ pub(crate) fn main() -> Result<()> {
         program: None,
         menu_open: false,
         menu_cursor: 0,
+        menu_query: String::new(),
         vt_mode,
         force_full: false,
+        bell: false,
     };
 
     // abrir el fichero inicial con todos los headers plegados
@@ -661,7 +664,11 @@ pub(crate) fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
         Shortcut::BorderDown => resize_border(app, -1)?,
         // en el shell ceden a readline (nunca interrumpir un comando)
         Shortcut::Menu if in_shell => return Ok(None),
-        Shortcut::Menu => app.menu_open = true,
+        Shortcut::Menu => {
+            app.menu_open = true;
+            app.menu_query.clear();
+            app.menu_cursor = 0;
+        }
         Shortcut::CloseProgram if in_shell => return Ok(None),
         Shortcut::CloseProgram => {
             if app.program.is_some() {
