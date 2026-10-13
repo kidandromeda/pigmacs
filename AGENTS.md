@@ -49,7 +49,7 @@ python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize�
 | `frame.rs` | 149 | `Style`, `Cell`, `Frame` (rejilla), `render_frame()` (pintado por diff), `strip_ansi()` |
 | `term.rs` | 679 | `Term` + `PState`: emulador VT100 completo (`feed`, `parse_sgr`, scroll, alt screen, línea de comandos…), `draw()` |
 | `shell.rs` | 316 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `csi_shell`, `draw_shell_output`, `resize` |
-| `program.rs` | 222 | `Program` (PTY del programa), `MENU` (14 entradas: nombre visible + argv), `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
+| `program.rs` | 222 | `Program` (PTY del programa), `MENU` (15 entradas: nombre visible + argv), `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
 | `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` |
 | `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd`, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
@@ -129,5 +129,5 @@ Reglas críticas que **no se deben romper**:
 ## Estado (2026-10-13)
 
 - **v2.0.0** commiteada localmente: split de `main.rs` en 10 módulos + menú de
-  14 programas. Commit `52facf6` y tag `v2.0.0` **sólo locales** (sin push).
+  15 programas. Commit `52facf6` y tag `v2.0.0` **sólo locales** (sin push).
 - 80/80 checks en verde, 0 warnings.

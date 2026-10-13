@@ -101,8 +101,8 @@ Cursor bloque estilo vim. La barra de estado muestra el modo activo.
 ## Programas en la ventana principal (menú Ctrl+P)
 
 `Ctrl+P` / `Alt+P` abre un menú con los programas instalados en el PATH
-(`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`, `gitui`,
-`tmux`, `neovim`, `bluetui`, `jeeves`, `lynx`, `w3m`…):
+(`htop`, `btop`, `fastfetch`, `ncdu`, `gdu`, `nmtui`, `ranger`, `mc`,
+`gitui`, `tmux`, `neovim`, `bluetui`, `jeeves`, `lynx`, `w3m`…):
 `j`/`k` o flechas mueven, `Enter` lanza, `Esc`/`q` cierra. El menú no se abre
 en modo SHELL (cede a readline). `neovim` se lanza con el comando `nvim`;
 `lynx` y `w3m` arrancan en `www.duckduckgo.com`.

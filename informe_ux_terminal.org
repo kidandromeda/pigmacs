@@ -96,7 +96,7 @@ de nuevo no hacía nada. Ahora =F1= y =?= alternan.
 ** 2.1 Qué hace
 
 =Ctrl+P= / =Alt+P= abre un menú flotante con los programas instalados en el
-PATH (=htop=, =btop=, =fastfetch=, =ncdu=, =gdu=, =nmtui=, =ranger=,
+PATH (=htop=, =btop=, =fastfetch=, =ncdu=, =gdu=, =nmtui=, =ranger=, =mc=,
 =gitui=, =tmux=, =neovim=, =bluetui=, =jeeves=, =lynx=, =w3m=…). =j=/=k=
 o flechas mueven, =Enter= lanza, =Esc=/=q= cierra.
 

@@ -21,7 +21,7 @@ use std::thread;
 
 /// programas del menú: (nombre visible, argv de lanzamiento).
 /// El filtro de PATH se hace con `argv[0]` al dibujarlo.
-pub(crate) const MENU: [(&str, &[&str]); 14] = [
+pub(crate) const MENU: [(&str, &[&str]); 15] = [
     ("htop", &["htop"]),
     ("btop", &["btop"]),
     ("fastfetch", &["fastfetch"]),
@@ -29,6 +29,7 @@ pub(crate) const MENU: [(&str, &[&str]); 14] = [
     ("gdu", &["gdu"]),
     ("nmtui", &["nmtui"]),
     ("ranger", &["ranger"]),
+    ("mc", &["mc"]),
     ("gitui", &["gitui"]),
     ("tmux", &["tmux"]),
     ("neovim", &["nvim"]),
