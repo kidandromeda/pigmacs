@@ -275,13 +275,166 @@ indicador =↳=), sin tocar el buffer.
 - *Riesgo:* medium (afecta al cálculo de filas visibles y al fold).
 - *Esfuerzo:* mediano-alto.
 
-** TODO [#C] Sesión y restauración
+** TODO [#B] Sesión y restauración
 
-Recordar =shell_rows=, posición del cursor, tree marcado (★) y programa en
-marcha en un =.pigmacs.session= por directorio. Arrancar con =--resume= lo
-restaura.
+*Problema:* al salir se pierde todo el contexto: ★ del tree, cwd,
+ficheros abiertos, borde del shell, historial de la IA.
+
+*Propuesta:* =.pigmacs.session= por directorio (o en XDG) que guarde: cwd
+y ★ del tree, buffers abiertos con su cursor y dirty, =shell_rows=,
+historial de IA y scratchpad. Arranque normal = restaurar; =--fresh= =
+arrancar de cero. Integra con los *buffers múltiples* y el *scratchpad*
+(abajo).
 
 - *Riesgo:* bajo · *Esfuerzo:* mediano.
+
+** TODO [#A] Ejecutar bloques #+BEGIN_SRC con resultados (org-babel)
+
+*Problema:* el objetivo original del programa es lanzar comandos desde un
+.org, pero hoy hay que copiarlos a la terminal a mano: los bloques
+=#+BEGIN_SRC= sólo se *leen* (y desde v3.1.0 se pintan bonitos).
+
+*Propuesta:* =Ctrl+Enter= sobre un bloque lo ejecuta y pega la salida
+debajo como =#+RESULTS:= (borrando la anterior si existe). Para lenguajes
+que no son shell, envoltorio =sh -c= con el código por stdin (p. ej.
+=python3 -= si está en el PATH; si no, aviso claro). La captura se hace
+por el PTY con una sentinela (=echo «pigmacs:fin $?»=) para delimitar
+exactamente la salida del bloque.
+
+- *Riesgo:* medio (PTY + delimitación de salida) · *Esfuerzo:* alto.
+
+** TODO [#A] File manager en el tree
+
+*Problema:* el tree sólo navega y abre; para renombrar o borrar un
+fichero hay que salir a la terminal.
+
+*Propuesta:* teclas de gestión en modo BROWSE con confirmación en la
+barra de estado: =a= crear fichero/dir · =F2= renombrar · =d= borrar
+(=¿borrar X? [s/N]=, recursivo sólo con doble confirmación) · =y=/=p=
+copiar/mover (tipo dired) · =i= info (tamaño, fecha, chmod). Todo con
+=std::fs=; cero dependencias.
+
+- *Riesgo:* bajo-medio · *Esfuerzo:* mediano.
+
+** TODO [#A] Command palette unificada
+
+*Problema:* hay dos mundos separados: el menú difuso de programas
+(=Ctrl+P=) y los atajos, que hay que memorizar.
+
+*Propuesta:* extender el menú a una *paleta* que mezcle *acciones* del
+editor (abrir, guardar, plegar todo, ejecutar bloque, ayuda, tema…) y
+*programas/comandos libres*, todo con el mismo filtro difuso y el mismo
+popup. Cada acción = etiqueta + tecla + función. =Ctrl+P= abre la paleta.
+
+- *Riesgo:* bajo · *Esfuerzo:* mediano.
+
+** TODO [#B] Múltiples buffers con pestañas
+
+*Problema:* sólo hay un fichero abierto: comparar dos .org o copiar entre
+notas obliga a dos instancias de pigmacs.
+
+*Propuesta:* =Vec<=buffer>= con sus =lines/row/col/dirty=; barra de
+pestañas en la fila 0 de la zona del editor (=main.org [+]+ =otro.org=),
+=Ctrl+Tab= / =Ctrl+1..9= para saltar, y cierre de buffer desde la paleta.
+Los atajos actuales operan sobre el buffer activo.
+
+- *Riesgo:* medio (el estado de edición vive disperso en =App=) ·
+  *Esfuerzo:* alto.
+
+** TODO [#B] Gestor de tareas propio (lee /proc)
+
+*Problema:* no hay forma de ver qué está corriendo *dentro* de pigmacs
+sin lanzar htop desde el menú.
+
+*Propuesta:* panel (=F5=) leyendo =/proc= (el proceso ya vive en Linux):
+lista de los hijos del PTY (shell, programas, IA) con PID, estado, CPU y
+memoria; =k= matar (SIGTERM) · =K= SIGKILL · =r= renice. Sin dependencias.
+
+- *Riesgo:* bajo · *Esfuerzo:* mediano.
+
+** TODO [#B] Scratchpad universal (Ctrl+Y)
+
+*Problema:* no hay buffer temporal: para guardar un texto suelto hay que
+crear un fichero o destruir lo que se está escribiendo.
+
+*Propuesta:* =Ctrl+Y= abre un panel de *scratchpad* (texto libre en
+memoria); desde ahí se puede enviar al shell (=Ctrl+E=), a la IA
+(=Ctrl+A=) o pegarlo en el editor (=Ctrl+R=). Se guarda con la sesión.
+
+- *Riesgo:* bajo · *Esfuerzo:* bajo-medio.
+
+** TODO [#B] Trabajos en segundo plano (jobs)
+
+*Problema:* un comando largo en la terminal interna bloquea la terminal:
+no existe "second plan".
+
+*Propuesta:* =Ctrl+Z= manda el job a segundo plano (SIGTSTP) y la barra
+de estado muestra =▲ 1: make ● 2:14=; recuperar con la paleta
+(=jobs=) o =Ctrl+Tab=. Cada job = un PTY extra (la infra ya existe).
+
+- *Riesgo:* medio · *Esfuerzo:* mediano-alto.
+
+** TODO [#B] Múltiples terminales (mini-tmux)
+
+*Problema:* sólo hay una terminal interna; alternar entre "el build" y
+"el server" obliga a dos sesiones.
+
+*Propuesta:* N terminales en paralelo con pestañas (misma infra que
+buffers y jobs), cicladas con =Ctrl+Tab=. El frame y =Term= ya dibujan
+"ventanas vivas".
+
+- *Riesgo:* medio · *Esfuerzo:* alto (se apoya en buffers/jobs).
+
+** TODO [#C] Calculadora / convertidor en la status
+
+Escribir =expr= y =Ctrl+E= la evalúa (números, paréntesis, + − × ÷ ^,
+raíces, hex/bin) con un parser propio (~100 líneas) y muestra el
+resultado en la status o en una línea nueva. Bonus: base64, tamaño de
+ficheros (1 KiB = 1024…).
+
+- *Riesgo:* nulo · *Esfuerzo:* bajo.
+
+** TODO [#C] Wiki-links y backlinks entre .org
+
+=[[nota.org]] y =[[nota.org::palabra]]= con =Enter= saltando a la nota
+(abriéndola como buffer); panel de *backlinks* (=¿quién me referencia?=)
+consultable desde la paleta. Second brain sin salir de la tty.
+
+- *Riesgo:* bajo · *Esfuerzo:* mediano.
+
+** TODO [#C] Journal: historial de lo lanzado
+
+Registrar cada comando lanzado desde el org/menú (hora, cwd, origen) en
+=.pigmacs.journal=; paleta =journal= para buscarlo y relanzarlo con
+Enter. Convierte pigmacs en memoria muscular del usuario.
+
+- *Riesgo:* nulo · *Esfuerzo:* bajo.
+
+** TODO [#C] Avisos de tareas org (SCHEDULED/DEADLINE)
+
+Detectar =SCHEDULED: <fecha>= / =DEADLINE: <fecha>= en las cabeceras;
+si algo va *hoy* o está vencido, aviso en la barra de estado
+(=⚠ 2 tareas para hoy=) y salto desde la paleta.
+
+- *Riesgo:* nulo · *Esfuerzo:* bajo.
+
+** TODO [#C] Pantalla de arranque con info del sistema
+
+Al abrir pigmacs *sin* fichero (o con =--splash=), dibujar en la zona
+del editor un "fastfetch" propio: hostname, uptime, kernel, RAM, cwd,
+hijos activos — la *login screen* del SO, con nuestro renderer y datos de
+=/proc=. Sin dependencias.
+
+- *Riesgo:* nulo · *Esfuerzo:* bajo-medio.
+
+*** Lo que NO se hará (líneas rojas del proyecto)
+
+- Gráficos sixel/kitty: no existen en la fuente VGA de la consola.
+- 256 colores / truecolor: paleta fija de 16 ANSI (decisión del usuario).
+- Red de verdad (ssh, descargas, APIs): eso es trabajo de los programas
+  del menú (tmux, nmtui, gitui ya están).
+- Dependencias nuevas: el binario único sin runtime es parte del encanto
+  (siguen valiendo sólo 3).
 
 * 4. Avisos del kernel (printk): explicación completa
 
