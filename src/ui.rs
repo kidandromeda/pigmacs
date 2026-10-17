@@ -9,6 +9,7 @@ use crate::{
     browser::{browser_width, draw_browser},
     editor::{compute_matches, draw_editor_lines, org_line_style},
     frame::{render_frame, Frame, Style},
+    launcher::draw_launcher,
     program::draw_menu,
     shell::draw_shell_output,
     theme::*,
@@ -31,7 +32,7 @@ ATAJOS EN DOS GRUPOS
   en modo SHELL las teclas van al programa de dentro: Ctrl+B (prefijo
   tmux), Ctrl+A/E/K/R (readline) se respetan; solo Ctrl+Q, Ctrl+S,
   Ctrl+Enter, Ctrl+J y Shift+Tab siguen siendo de pigmacs
-  en modo PROG (programa lanzado con Ctrl+P) sólo Ctrl/Alt+Q, S, P, G y
+  en modo PROG (programa lanzado con Ctrl+P) sólo Ctrl/Alt+Q, S, P, G, X y
   Ctrl+J son de pigmacs; el resto de teclas ceden al programa en marcha
 
 ACCIONES GLOBALES
@@ -49,6 +50,7 @@ ACCIONES GLOBALES
   Ctrl+U / Ctrl+D    subir/bajar el borde (más terminal / más editor)
   Ctrl+N / Alt+N     nueva conversación IA (dentro del panel IA)
   Ctrl+P / Alt+P     menú para lanzar programas en la ventana principal
+  Ctrl+X / Alt+X     lanzador de aplicaciones gráficas (.desktop del sistema)
   Ctrl+G / Alt+G     cerrar el programa en marcha
   F1 / ?             esta ayuda (en cualquier panel, el shell incluido)
   Shift+←/→/↑/↓      árbol · editor · terminal (grupo gui)
@@ -123,6 +125,24 @@ PROGRAMAS EN LA VENTANA PRINCIPAL (Ctrl+P)
   (se lanza el nuevo y se cierra el anterior; si eliges el que ya
   está en marcha sólo se recupera su foco con Ctrl+P + Enter)
 
+LANZADOR DE APLICACIONES GRÁFICAS (Ctrl+X)
+  lista los .desktop de /usr/share/applications, /usr/local/share y
+  ~/.local/share/applications (los tuyos pisan los del sistema)
+  escribir filtra (difuso): "brv" encuentra a Brave; j k / ↑↓ eligen;
+  Enter lanza · Esc limpia el filtro y Esc de nuevo cierra
+  sin sesión gráfica pigmacs lanza "startx /ruta/al/binario" él mismo,
+  heredando la tty real (startx ve tty=/dev/ttyN y le pasa «-keeptty» a
+  Xorg), igual que si lo teclearas a mano: X ocupa la consola y, al
+  cerrar la app, vuelve pigmacs con la pantalla repintada; los errores
+  de X se ven en la consola; si ya hay DISPLAY, el comando va al shell
+  embebido
+  los argumentos del .desktop y los códigos de campo (%f, %u, %c, %k,
+  %i, %%) se resuelven (si la app pide argumentos se genera un wrapper
+  temporal: startx sólo admite un cliente sin argumentos)
+  las .desktop con Terminal=true se abren en la ventana principal,
+  igual que las del menú Ctrl+P
+  si no hay startx (xinit) ni DISPLAY, lo dice en el status
+
 PANEL IA (pi coding agent)
   Enter               enviar la pregunta
   ↑↓                  historial de preguntas
@@ -150,6 +170,7 @@ GENERAL
   Ctrl+K              limpiar la terminal
   Ctrl+F / Ctrl+T     tree de ficheros / terminal (T: ir y salir)
   Ctrl+P / Ctrl+G     menú de programas / cerrar programa en marcha
+  Ctrl+X              lanzador de aplicaciones gráficas (startx)
 "#;
 
 pub(crate) fn draw_help(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
@@ -320,6 +341,11 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
     // menú de programas: siempre encima del área principal
     if app.menu_open {
         draw_menu(app, bx, area_w, editor_rows, &mut fr);
+    }
+
+    // lanzador de aplicaciones gráficas: el mismo popup, encima de todo
+    if app.launcher_open {
+        draw_launcher(app, bx, area_w, editor_rows, &mut fr);
     }
 
     // separador del shell (solo a la derecha del navegador)

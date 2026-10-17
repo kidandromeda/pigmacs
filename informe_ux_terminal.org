@@ -194,6 +194,54 @@ simples). =Esc= limpia/cierra.
 - *Riesgo:* bajo (ya existe el menú modal; se añade un campo de texto).
 - *Esfuerzo:* pequeño.
 
+** DONE [#A] Lanzador de aplicaciones gráficas (Ctrl+X)
+
+*Estado (rama =experimental/lanzador-grafico=):* ***entregado.*** =Ctrl+X=
+/ =Alt+X= abre un popup con las aplicaciones del sistema leídas de los
+=.desktop= (=~/.local/share/applications=, =/usr/local/share/applications=,
+=/usr/share/applications=; los del usuario pisan los del sistema). Mismo
+lenguaje visual y mismas teclas que el menú =Ctrl+P=: escribir filtra
+difusamente, =j=/=k= o flechas mueven (la ventana sigue al cursor con
+indicadores =↑= / =↓= cuando la lista es larga), =Enter= lanza, =Esc=
+limpia/cierra.
+
+- *Sin sesión gráfica* (=tty= real): pigmacs lanza =startx= **él mismo,
+  heredando la consola** — =startx= ve =tty= = =/dev/ttyN= y le pasa
+  =-keeptty= a Xorg, exactamente lo que harías a mano
+  (=startx /usr/bin/brave-browser=). X ocupa la consola mientras dure la
+  app y, al cerrarla, pigmacs repinta la pantalla entera y vuelve el
+  terminal; los errores de =startx= / Xorg se ven directamente en la
+  consola (el log completo queda en =~/.local/share/xorg/=). Mientras X
+  tiene la consola pigmacs no pinta nada y las teclas se descartan
+  (=x_poll=). *Corregido tras probarlo en consola real*: la primera
+  versión mandaba el comando al shell embebido, pero ese =pty= vive en un
+  =/dev/pts= — sin =tty= real =startx= no le pasa =-keeptty= al servidor
+  X y el arranque moría con «connection refused» (o se quedaba esperando
+  sin decir nada).
+- *Con sesión gráfica* (=DISPLAY= / =WAYLAND_DISPLAY=): el comando va
+  directo, sin =startx=.
+- Si el =.desktop= lleva =Terminal=true=, la app se abre en la ventana
+  principal sobre su propio PTY (=launch_program=, igual que =Ctrl+P=).
+- Se resuelven los códigos de campo del spec (=%c=, =%k=, =%i=, =%%=;
+  =%f=/%u= se descartan) y las comillas del =Exec=; como =startx= sólo
+  admite un cliente ejecutable *sin argumentos*, si la app pide argumentos
+  se genera un wrapper temporal =/tmp/pigmacs-launch-<pid>.sh=.
+- Se ocultan las entradas =Hidden= / =NoDisplay=, las que no son
+  =Type=Application=, las de otros escritorios (=OnlyShowIn= /
+  =NotShowIn=) y las cuyo =TryExec= no está en el PATH.
+- Sin dependencias nuevas: el parser de =.desktop= (con sus escapes y su
+  tokenización de comillas) es nuestro (=src/launcher.rs=, ~625 líneas).
+- Tests: 10 checks nuevos en =test_fase2.py= con un =startx= falso y
+  =.desktop= propios; como el camino directo sólo se da en consola real,
+  el gancho =PIGMACS_FAKE_VT= (sólo para las suites) simula la =tty=.
+
+*Problema (original):* desde una =tty= no había forma de lanzar una app
+gráfica sin salir de pigmacs y teclear =startx= a mano.
+
+*Riesgo:* bajo (módulo nuevo; el único cambio ajeno es extraer
+=draw_popup= del menú =Ctrl+P= para reutilizarlo).
+*Esfuerzo:* medio.
+
 ** TODO [#B] Fichero de configuración
 
 *Problema:* atajos, colores y tamaño del panel shell están fijos en el

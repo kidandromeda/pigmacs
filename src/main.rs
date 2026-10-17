@@ -8,6 +8,7 @@ mod app;
 mod browser;
 mod editor;
 mod frame;
+mod launcher;
 mod program;
 mod shell;
 mod term;
@@ -19,6 +20,7 @@ use app::*;
 use browser::*;
 use editor::*;
 use frame::*;
+use launcher::*;
 use program::*;
 use shell::*;
 use ui::*;
@@ -125,8 +127,13 @@ pub(crate) fn main() -> Result<()> {
     };
     browser.refresh();
 
-    let vt_mode = running_on_vt();
-    let printk_restore = if vt_mode { lower_kernel_printk() } else { None };
+    let vt_real = running_on_vt();
+    let printk_restore = if vt_real { lower_kernel_printk() } else { None };
+    // PIGMACS_FAKE_VT: las suites (tests/*.py) corren en una PTY y no tienen
+    // tty real; el gancho simula la consola para poder probar el camino del
+    // lanzador que sólo se da en ella (spawn directo de startx, heredando la
+    // stdio de pigmacs, que es lo que hace que Xorg reciba «-keeptty»)
+    let vt_mode = vt_real || env::var("PIGMACS_FAKE_VT").is_ok();
 
     let mut app = App {
         path,
@@ -182,6 +189,11 @@ pub(crate) fn main() -> Result<()> {
         menu_open: false,
         menu_cursor: 0,
         menu_query: String::new(),
+        launcher_open: false,
+        launcher_query: String::new(),
+        launcher_cursor: 0,
+        launcher_apps: Vec::new(),
+        x: None,
         vt_mode,
         force_full: false,
         bell: false,
@@ -196,7 +208,7 @@ pub(crate) fn main() -> Result<()> {
 
     // aviso del kernel en consolas de texto: si no se puede bajar el nivel
     // de consola, se repinta la pantalla cada 2 s (run()) para borrarlos
-    if vt_mode && printk_restore.is_none() {
+    if vt_real && printk_restore.is_none() {
         app.status =
             "kernel.printk sin permisos · «sudo dmesg -n 1» evita los avisos del kernel".into();
     }
@@ -263,6 +275,16 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
     let mut last_heal = Instant::now();
     loop {
         app.ai_flush();
+        // X (startx) sobre la tty real: mientras ocupa la consola no se pinta
+        // nada ni se leen teclas; al terminar se repinta entera la pantalla
+        match x_poll(app)? {
+            XEstado::EnMarcha => continue,
+            XEstado::Terminada(msg) => {
+                app.status = msg;
+                app.redraw = true;
+            }
+            XEstado::Inactiva => {}
+        }
         // programa de la ventana principal: volcar su salida al emulador,
         // responder a lo que pregunte (DSR/DA) y detectar si ha terminado
         if let Some(p) = app.program.as_mut() {
@@ -344,6 +366,12 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                     handle_menu_key(app, k);
                     continue;
                 }
+                // lanzador de aplicaciones gráficas (Ctrl+X): captura todas
+                // las teclas (igual que el menú Ctrl+P)
+                if app.launcher_open {
+                    handle_launcher_key(app, k);
+                    continue;
+                }
                 // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
                 // (grupo gui; el grupo tty hace lo mismo con Ctrl+U / Ctrl+D)
                 if k.modifiers.contains(KeyModifiers::CONTROL)
@@ -403,7 +431,7 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                     continue;
                 }
                 // ——— programa en la ventana principal ———
-                // sólo Q/S/P/G, Ctrl+J (volver al editor) y F1 siguen siendo
+                // sólo Q/S/P/G/X, Ctrl+J (volver al editor) y F1 siguen siendo
                 // de pigmacs; el resto de teclas ceden al programa (Ctrl+A,
                 // Ctrl+F, flechas…)
                 if app.mode == Mode::Program {
@@ -417,6 +445,7 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                             Shortcut::Quit
                             | Shortcut::Save
                             | Shortcut::Menu
+                            | Shortcut::Launcher
                             | Shortcut::CloseProgram
                             | Shortcut::ToEditor => {
                                 if let Some(quit) = shortcut(app, sc)? {
@@ -535,6 +564,7 @@ pub(crate) enum Shortcut {
     BorderUp,
     BorderDown,
     Menu,         // Ctrl/Alt+P: lanzar un programa en la ventana principal
+    Launcher,     // Ctrl/Alt+X: lanzador de aplicaciones gráficas (.desktop)
     CloseProgram, // Ctrl/Alt+G: cerrar el programa en marcha
     ToEditor,     // Ctrl+J: volver al editor (escape seguro en tty reales)
 }
@@ -562,6 +592,7 @@ pub(crate) fn shortcut_of(k: KeyEvent) -> Option<Shortcut> {
         'u' => Shortcut::BorderUp,
         'd' => Shortcut::BorderDown,
         'p' => Shortcut::Menu,
+        'x' => Shortcut::Launcher,
         'g' => Shortcut::CloseProgram,
         // Ctrl+J = volver al editor. Reservado incluso en el shell: en las tty
         // reales Shift+Tab no se genera, pero el kernel sí entrega siempre el
@@ -669,6 +700,9 @@ pub(crate) fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
             app.menu_query.clear();
             app.menu_cursor = 0;
         }
+        // el lanzador de apps gráficas cede igual que el menú en el shell
+        Shortcut::Launcher if in_shell => return Ok(None),
+        Shortcut::Launcher => open_launcher(app),
         Shortcut::CloseProgram if in_shell => return Ok(None),
         Shortcut::CloseProgram => {
             if app.program.is_some() {

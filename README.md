@@ -95,6 +95,7 @@ control ASCII que llegan siempre en una consola de texto) y otro para
 | nueva conversación IA | `Ctrl+N` | `Alt+N` |
 | subir/bajar el borde | `Ctrl+U`/`Ctrl+D` | `Ctrl+Shift+↑/↓` |
 | menú de programas | `Ctrl+P` | `Alt+P` |
+| lanzador de aplicaciones gráficas | `Ctrl+X` | `Alt+X` |
 | cerrar programa en marcha | `Ctrl+G` | `Alt+G` |
 | ayuda | `?` | `F1` |
 
@@ -134,6 +135,48 @@ el comando `mc`; `lynx` y `w3m` arrancan en `www.duckduckgo.com`.
 - el PTY se redimensiona solo con la terminal, el borde editor/shell y el tree
 - si el programa termina solo, pigmacs vuelve al editor y lo indica en el status
 - `Ctrl+G` mata el programa y no deja zombies ni huérfanos
+
+## Lanzador de aplicaciones gráficas (Ctrl+X)
+
+`Ctrl+X` / `Alt+X` abre un popup con **las aplicaciones instaladas en el
+sistema**, leídas de tus `.desktop` (`~/.local/share/applications`,
+`/usr/local/share/applications` y `/usr/share/applications`; los tuyos pisan
+a los del sistema, como manda la especificación XDG).
+
+Funciona como el menú `Ctrl+P`: **escribir filtra** de forma difusa
+(`brv` → Brave), `j`/`k` o flechas mueven, `Enter` lanza, `Esc` limpia el
+filtro y `Esc` de nuevo cierra. La ventana sigue al cursor si hay muchas
+aplicaciones (flechitas `↑`/`↓` con el recuento de lo que queda fuera).
+
+Al elegir una app:
+
+- **con sesión gráfica** (`DISPLAY` o `WAYLAND_DISPLAY`) el comando se manda
+  tal cual al shell embebido y la app arranca en el escritorio en el que
+  estés;
+- **sin sesión gráfica** (tty real) pigmacs lanza `startx` **él mismo,
+  heredando la consola**: `startx` ve `tty` = `/dev/ttyN` y le pasa
+  `-keeptty` a Xorg, exactamente igual que si teclearas a mano
+  `startx /usr/bin/brave-browser`. No va por el shell embebido, porque
+  ese es un `/dev/pts` y con él el servidor no arranca. X ocupa la
+  consola mientras dure la app; al cerrarla, pigmacs repinta la pantalla
+  entera y vuelve el terminal. Los errores de `startx`/Xorg se ven
+  directamente en la consola, como si lo hubieras ejecutado tú (el log
+  completo de Xorg queda en `~/.local/share/xorg/`);
+- si la `.desktop` lleva `Terminal=true`, la app se abre en la **ventana
+  principal** sobre su propio PTY, igual que las del menú `Ctrl+P`.
+
+Detalles: se resuelven los códigos de campo de la especificación (`%c` nombre,
+`%k` fichero, `%i` icono, `%%` literal; los `%f`/`%u` se descartan porque no
+hay fichero que abrir) y las comillas de la línea `Exec`; si la app pide
+argumentos y no hay sesión gráfica se genera un *wrapper* temporal, porque
+`startx` sólo admite un cliente ejecutable sin argumentos. Se ocultan las
+entradas `Hidden`/`NoDisplay`, las que no son `Type=Application`, las de
+otros escritorios (`OnlyShowIn`/`NotShowIn`) y las cuyo `TryExec` no está
+instalado.
+
+Si no hay `startx` (paquete `xinit`) ni sesión gráfica, el status lo dice.
+No hace falta `dmenu` ni `dunst`: el selector es el propio popup de pigmacs
+(en dunst no hay selector: es un demonio de notificaciones).
 
 ## Consola de texto (VT real)
 
