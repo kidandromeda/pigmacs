@@ -153,12 +153,15 @@ Al elegir una app:
 - **con sesión gráfica** (`DISPLAY` o `WAYLAND_DISPLAY`) el comando se manda
   tal cual al shell embebido y la app arranca en el escritorio en el que
   estés;
-- **sin sesión gráfica** (tty real) el lanzador hace lo mismo que si
-  teclearas a mano `startx /usr/bin/brave-browser`: arranca X en la tty
-  actual con la app como cliente. X ocupa la consola mientras dure la app
-  y, al cerrarla, vuelves al terminal con pigmacs. La salida y los errores
-  de `startx` se ven en el panel de la terminal (`Ctrl+T`), que es donde se
-  manda el comando;
+- **sin sesión gráfica** (tty real) pigmacs lanza `startx` **él mismo,
+  heredando la consola**: `startx` ve `tty` = `/dev/ttyN` y le pasa
+  `-keeptty` a Xorg, exactamente igual que si teclearas a mano
+  `startx /usr/bin/brave-browser`. No va por el shell embebido, porque
+  ese es un `/dev/pts` y con él el servidor no arranca. X ocupa la
+  consola mientras dure la app; al cerrarla, pigmacs repinta la pantalla
+  entera y vuelve el terminal. Los errores de `startx`/Xorg se ven
+  directamente en la consola, como si lo hubieras ejecutado tú (el log
+  completo de Xorg queda en `~/.local/share/xorg/`);
 - si la `.desktop` lleva `Terminal=true`, la app se abre en la **ventana
   principal** sobre su propio PTY, igual que las del menú `Ctrl+P`.
 

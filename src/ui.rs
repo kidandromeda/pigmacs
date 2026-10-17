@@ -130,9 +130,12 @@ LANZADOR DE APLICACIONES GRÁFICAS (Ctrl+X)
   ~/.local/share/applications (los tuyos pisan los del sistema)
   escribir filtra (difuso): "brv" encuentra a Brave; j k / ↑↓ eligen;
   Enter lanza · Esc limpia el filtro y Esc de nuevo cierra
-  sin sesión gráfica arranca X con "startx /ruta/al/binario", igual que
-  si lo teclearas a mano en la tty (X ocupa la consola y, al cerrar la
-  app, vuelve el terminal); si ya hay DISPLAY, el comando va directo
+  sin sesión gráfica pigmacs lanza "startx /ruta/al/binario" él mismo,
+  heredando la tty real (startx ve tty=/dev/ttyN y le pasa «-keeptty» a
+  Xorg), igual que si lo teclearas a mano: X ocupa la consola y, al
+  cerrar la app, vuelve pigmacs con la pantalla repintada; los errores
+  de X se ven en la consola; si ya hay DISPLAY, el comando va al shell
+  embebido
   los argumentos del .desktop y los códigos de campo (%f, %u, %c, %k,
   %i, %%) se resuelven (si la app pide argumentos se genera un wrapper
   temporal: startx sólo admite un cliente sin argumentos)

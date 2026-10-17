@@ -127,8 +127,13 @@ pub(crate) fn main() -> Result<()> {
     };
     browser.refresh();
 
-    let vt_mode = running_on_vt();
-    let printk_restore = if vt_mode { lower_kernel_printk() } else { None };
+    let vt_real = running_on_vt();
+    let printk_restore = if vt_real { lower_kernel_printk() } else { None };
+    // PIGMACS_FAKE_VT: las suites (tests/*.py) corren en una PTY y no tienen
+    // tty real; el gancho simula la consola para poder probar el camino del
+    // lanzador que sólo se da en ella (spawn directo de startx, heredando la
+    // stdio de pigmacs, que es lo que hace que Xorg reciba «-keeptty»)
+    let vt_mode = vt_real || env::var("PIGMACS_FAKE_VT").is_ok();
 
     let mut app = App {
         path,
@@ -188,6 +193,7 @@ pub(crate) fn main() -> Result<()> {
         launcher_query: String::new(),
         launcher_cursor: 0,
         launcher_apps: Vec::new(),
+        x: None,
         vt_mode,
         force_full: false,
         bell: false,
@@ -202,7 +208,7 @@ pub(crate) fn main() -> Result<()> {
 
     // aviso del kernel en consolas de texto: si no se puede bajar el nivel
     // de consola, se repinta la pantalla cada 2 s (run()) para borrarlos
-    if vt_mode && printk_restore.is_none() {
+    if vt_real && printk_restore.is_none() {
         app.status =
             "kernel.printk sin permisos · «sudo dmesg -n 1» evita los avisos del kernel".into();
     }
@@ -269,6 +275,16 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
     let mut last_heal = Instant::now();
     loop {
         app.ai_flush();
+        // X (startx) sobre la tty real: mientras ocupa la consola no se pinta
+        // nada ni se leen teclas; al terminar se repinta entera la pantalla
+        match x_poll(app)? {
+            XEstado::EnMarcha => continue,
+            XEstado::Terminada(msg) => {
+                app.status = msg;
+                app.redraw = true;
+            }
+            XEstado::Inactiva => {}
+        }
         // programa de la ventana principal: volcar su salida al emulador,
         // responder a lo que pregunte (DSR/DA) y detectar si ha terminado
         if let Some(p) = app.program.as_mut() {

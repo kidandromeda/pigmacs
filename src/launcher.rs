@@ -15,16 +15,25 @@
 //
 // Sin dependencias nuevas: el parser de .desktop es nuestro.
 use crate::{
-    app::{App, Mode},
+    app::{layout, App, Mode},
     frame::Frame,
     program::{draw_popup, launch_program, subseq, which},
     shell::run_in_shell,
 };
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use anyhow::Result;
+use crossterm::{
+    cursor::{Hide, MoveTo, Show},
+    event::{self, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
+use std::time::Duration;
 
 /// una aplicación del sistema, sacada de su fichero .desktop
 #[derive(Clone)]
@@ -403,9 +412,70 @@ pub(crate) fn launch_app(app: &mut App, e: &AppEntry) {
     launch_gui(app, e, argv);
 }
 
-/// app gráfica: con sesión gráfica el comando va al shell embebido; sin
-/// ella, `startx <binario>` (startx sólo acepta clientes con ruta absoluta
-/// y sin argumentos, así que si los hay se genera un wrapper temporal)
+/// sesión X en marcha sobre la tty real: el hijo hereda stdin/stdout/stderr
+/// de pigmacs, que son la consola, y mientras vive pigmacs no pinta nada
+pub(crate) struct XSesion {
+    pub(crate) nombre: String,
+    pub(crate) child: Child,
+}
+
+pub(crate) enum XEstado {
+    Inactiva,          // no hay app gráfica lanzada por pigmacs
+    EnMarcha,          // X tiene la consola: no pintar ni leer teclas
+    Terminada(String), // X ha terminado: texto para el status
+}
+
+/// mientras X ocupa la consola, pigmacs no pinta nada (su frame era la
+/// pantalla y X la ha pisado) y las teclas que lleguen se descartan; al
+/// terminar se vuelve a la pantalla alterna y se repinta entera
+pub(crate) fn x_poll(app: &mut App) -> Result<XEstado> {
+    // se consulta el hijo sin mantener la referencia (para poder hacer take())
+    let (estado, ok) = match app.x.as_mut() {
+        Some(x) => match x.child.try_wait() {
+            // X sigue vivo: teclas fuera, que ahora las maneja él
+            Ok(None) => {
+                while event::poll(Duration::from_millis(100))? {
+                    let _ = event::read()?;
+                }
+                return Ok(XEstado::EnMarcha);
+            }
+            Ok(Some(st)) => (st.to_string(), st.success()),
+            Err(err) => (format!("imposible saber su estado ({err})"), false),
+        },
+        None => return Ok(XEstado::Inactiva),
+    };
+    let nombre = app.x.take().map(|x| x.nombre).unwrap_or_default();
+    volver_a_pigmacs(app);
+    let pista = if ok { "" } else { " · log: ~/.local/share/xorg/Xorg.0.log" };
+    Ok(XEstado::Terminada(format!("«{nombre}» terminó ({estado}){pista}")))
+}
+
+/// restaura la pantalla de pigmacs tras X: pantalla alterna, raw mode y
+/// repaint completo (X dejó la consola en texto con lo que haya impreso)
+fn volver_a_pigmacs(app: &mut App) {
+    let _ = execute!(
+        io::stdout(),
+        EnterAlternateScreen,
+        Hide,
+        MoveTo(0, 0),
+        Clear(ClearType::All)
+    );
+    let _ = terminal::enable_raw_mode();
+    // la terminal pudo cambiar de tamaño mientras X estaba activo
+    if let Ok((c, r)) = terminal::size() {
+        let (_, sr) = layout(r, app.shell_rows);
+        app.shell_rows = sr;
+        app.shell.resize(sr, c);
+    }
+    app.force_full = true;
+}
+
+/// app gráfica: con sesión gráfica el comando va al shell embebido (X ya
+/// corre en otro sitio); sin ella, en una tty real, pigmacs lanza `startx`
+/// él mismo heredando la consola — así `tty` reporta /dev/ttyN y Xorg
+/// recibe `-keeptty`, igual que si teclearas `startx /usr/bin/app` a mano.
+/// (startx sólo admite clientes con ruta absoluta y sin argumentos: si la
+/// app pide argumentos se genera un wrapper temporal)
 fn launch_gui(app: &mut App, e: &AppEntry, argv: Vec<String>) {
     let Some(exe) = resolve_exe(&argv[0]) else {
         app.status = format!("«{}»: «{}» no está en el PATH", e.name, argv[0]);
@@ -414,42 +484,72 @@ fn launch_gui(app: &mut App, e: &AppEntry, argv: Vec<String>) {
     let mut argv = argv;
     argv[0] = exe.to_string_lossy().into_owned();
 
+    // con sesión gráfica el comando va al shell embebido (X ya corre aquí)
     let en_x = !env::var("DISPLAY").unwrap_or_default().is_empty()
         || !env::var("WAYLAND_DISPLAY").unwrap_or_default().is_empty();
-
-    let linea = if en_x {
-        comando(&argv)
-    } else if let Some(startx) = which("startx") {
-        if argv.len() == 1 {
-            format!("{} {}", comilla(&startx.to_string_lossy()), comilla(&argv[0]))
-        } else {
-            match wrapper(&argv) {
-                Some(w) => format!("{} {}", comilla(&startx.to_string_lossy()), comilla(&w.to_string_lossy())),
-                None => {
-                    app.status = format!("«{}»: no se pudo escribir el wrapper temporal", e.name);
-                    return;
-                }
-            }
+    if en_x {
+        let linea = comando(&argv);
+        if let Err(err) = run_in_shell(app, &linea) {
+            app.status = format!("No se pudo lanzar «{}»: {err}", e.name);
+            return;
         }
-    } else {
+        if app.mode != Mode::Shell {
+            app.top_mode = app.mode;
+            app.mode = Mode::Shell;
+        }
+        app.status = format!("«{}» lanzado en la sesión gráfica", e.name);
+        return;
+    }
+
+    let Some(startx) = which("startx") else {
         app.status = format!("«{}»: no hay startx (xinit) ni sesión gráfica", e.name);
         return;
     };
+    // cliente de startx: el binario solo, o un wrapper si pide argumentos
+    let cliente: PathBuf = if argv.len() == 1 {
+        PathBuf::from(&argv[0])
+    } else {
+        match wrapper(&argv) {
+            Some(w) => w,
+            None => {
+                app.status = format!("«{}»: no se pudo escribir el wrapper temporal", e.name);
+                return;
+            }
+        }
+    };
 
+    // tty real: X toma esta misma consola; pigmacs se aparta y no vuelve
+    // hasta que la app cierre (x_poll repinta todo al terminar)
+    if app.vt_mode {
+        match Command::new(&startx).arg(&cliente).spawn() {
+            Ok(child) => {
+                app.x = Some(XSesion {
+                    nombre: e.name.clone(),
+                    child,
+                });
+                // la consola deja de ser de pigmacs: salir de la pantalla
+                // alterna (en una VT real el kernel la ignora, en emuladores no)
+                let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+                let _ = io::stdout().flush();
+                app.status =
+                    format!("«{}» en X · la app ocupa la consola; al cerrarla vuelves a pigmacs", e.name);
+            }
+            Err(err) => app.status = format!("No se pudo lanzar «{}»: {err}", e.name),
+        }
+        return;
+    }
+
+    // sin tty real (tmux, xterm…): por el shell embebido, que se ve correr
+    let linea = format!("{} {}", comilla(&startx.to_string_lossy()), comilla(&cliente.to_string_lossy()));
     if let Err(err) = run_in_shell(app, &linea) {
         app.status = format!("No se pudo lanzar «{}»: {err}", e.name);
         return;
     }
-    // el comando se ve correr en el panel shell: Ctrl+T vuelve al modo anterior
     if app.mode != Mode::Shell {
         app.top_mode = app.mode;
         app.mode = Mode::Shell;
     }
-    app.status = if en_x {
-        format!("«{}» lanzado en la sesión gráfica", e.name)
-    } else {
-        format!("«{}» lanzado con startx · Ctrl+T vuelve al editor", e.name)
-    };
+    app.status = format!("«{}» lanzado con startx · Ctrl+T vuelve al editor", e.name);
 }
 
 /// script temporal ejecutable con el comando ya citado: startx lo usa como

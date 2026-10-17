@@ -7,6 +7,7 @@ use crate::{
     browser::Browser,
     frame::{strip_ansi, Frame},
     launcher::AppEntry,
+    launcher::XSesion,
     program::Program,
     shell::Shell,
 };
@@ -105,6 +106,9 @@ pub(crate) struct App {
     pub(crate) launcher_query: String,
     pub(crate) launcher_cursor: usize,
     pub(crate) launcher_apps: Vec<AppEntry>, // caché al abrir (se relee cada vez)
+    // app gráfica lanzada con startx sobre la tty real: mientras vive,
+    // pigmacs se aparta y no pinta nada (x_poll en el bucle de eventos)
+    pub(crate) x: Option<XSesion>,
     // consola de texto real (/dev/ttyN): saneado de avisos del kernel
     pub(crate) vt_mode: bool,
     pub(crate) force_full: bool, // repintar todas las celdas en el próximo draw
