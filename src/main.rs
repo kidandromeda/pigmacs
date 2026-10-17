@@ -8,6 +8,7 @@ mod app;
 mod browser;
 mod editor;
 mod frame;
+mod launcher;
 mod program;
 mod shell;
 mod term;
@@ -19,6 +20,7 @@ use app::*;
 use browser::*;
 use editor::*;
 use frame::*;
+use launcher::*;
 use program::*;
 use shell::*;
 use ui::*;
@@ -182,6 +184,10 @@ pub(crate) fn main() -> Result<()> {
         menu_open: false,
         menu_cursor: 0,
         menu_query: String::new(),
+        launcher_open: false,
+        launcher_query: String::new(),
+        launcher_cursor: 0,
+        launcher_apps: Vec::new(),
         vt_mode,
         force_full: false,
         bell: false,
@@ -344,6 +350,12 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                     handle_menu_key(app, k);
                     continue;
                 }
+                // lanzador de aplicaciones gráficas (Ctrl+X): captura todas
+                // las teclas (igual que el menú Ctrl+P)
+                if app.launcher_open {
+                    handle_launcher_key(app, k);
+                    continue;
+                }
                 // mover el borde editor/shell: Ctrl+Shift+↑ reduce el shell (más edición)
                 // (grupo gui; el grupo tty hace lo mismo con Ctrl+U / Ctrl+D)
                 if k.modifiers.contains(KeyModifiers::CONTROL)
@@ -403,7 +415,7 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                     continue;
                 }
                 // ——— programa en la ventana principal ———
-                // sólo Q/S/P/G, Ctrl+J (volver al editor) y F1 siguen siendo
+                // sólo Q/S/P/G/X, Ctrl+J (volver al editor) y F1 siguen siendo
                 // de pigmacs; el resto de teclas ceden al programa (Ctrl+A,
                 // Ctrl+F, flechas…)
                 if app.mode == Mode::Program {
@@ -417,6 +429,7 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                             Shortcut::Quit
                             | Shortcut::Save
                             | Shortcut::Menu
+                            | Shortcut::Launcher
                             | Shortcut::CloseProgram
                             | Shortcut::ToEditor => {
                                 if let Some(quit) = shortcut(app, sc)? {
@@ -535,6 +548,7 @@ pub(crate) enum Shortcut {
     BorderUp,
     BorderDown,
     Menu,         // Ctrl/Alt+P: lanzar un programa en la ventana principal
+    Launcher,     // Ctrl/Alt+X: lanzador de aplicaciones gráficas (.desktop)
     CloseProgram, // Ctrl/Alt+G: cerrar el programa en marcha
     ToEditor,     // Ctrl+J: volver al editor (escape seguro en tty reales)
 }
@@ -562,6 +576,7 @@ pub(crate) fn shortcut_of(k: KeyEvent) -> Option<Shortcut> {
         'u' => Shortcut::BorderUp,
         'd' => Shortcut::BorderDown,
         'p' => Shortcut::Menu,
+        'x' => Shortcut::Launcher,
         'g' => Shortcut::CloseProgram,
         // Ctrl+J = volver al editor. Reservado incluso en el shell: en las tty
         // reales Shift+Tab no se genera, pero el kernel sí entrega siempre el
@@ -669,6 +684,9 @@ pub(crate) fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
             app.menu_query.clear();
             app.menu_cursor = 0;
         }
+        // el lanzador de apps gráficas cede igual que el menú en el shell
+        Shortcut::Launcher if in_shell => return Ok(None),
+        Shortcut::Launcher => open_launcher(app),
         Shortcut::CloseProgram if in_shell => return Ok(None),
         Shortcut::CloseProgram => {
             if app.program.is_some() {

@@ -110,6 +110,16 @@ pub(crate) fn send_key_to_shell(writer: &mut Box<dyn Write + Send>, k: KeyEvent)
     Ok(())
 }
 
+/// escribe una línea de comando en el shell embebido y la ejecuta, como si
+/// la hubieras tecleado (el lanzador de apps gráficas la usa para arrancar
+/// `startx …` y poder ver su salida y sus errores en el panel)
+pub(crate) fn run_in_shell(app: &mut App, cmd: &str) -> Result<()> {
+    app.shell.writer.write_all(cmd.as_bytes())?;
+    app.shell.writer.write_all(b"\r")?;
+    app.shell.writer.flush()?;
+    Ok(())
+}
+
 /// secuencias CSI del mini-emulador del panel shell: readline las usa al
 /// editar (Delete → DCH, Ctrl+U → EL, flechas → CUF/CUB…); sin
 /// interpretarlas, los caracteres que se borraban se quedaban pintados

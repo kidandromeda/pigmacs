@@ -6,6 +6,7 @@
 use crate::{
     browser::Browser,
     frame::{strip_ansi, Frame},
+    launcher::AppEntry,
     program::Program,
     shell::Shell,
 };
@@ -99,6 +100,11 @@ pub(crate) struct App {
     // filtro del menú Ctrl+P: escribir filtra (difuso), Enter lanza
     // lo tecleado si no hay coincidencias
     pub(crate) menu_query: String,
+    // lanzador de aplicaciones gráficas (Ctrl+X): .desktop del sistema
+    pub(crate) launcher_open: bool,
+    pub(crate) launcher_query: String,
+    pub(crate) launcher_cursor: usize,
+    pub(crate) launcher_apps: Vec<AppEntry>, // caché al abrir (se relee cada vez)
     // consola de texto real (/dev/ttyN): saneado de avisos del kernel
     pub(crate) vt_mode: bool,
     pub(crate) force_full: bool, // repintar todas las celdas en el próximo draw

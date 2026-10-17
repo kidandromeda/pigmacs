@@ -4,7 +4,8 @@
 # Licencia:   MIT
 # Versión:    3.1.0
 # Fecha:      2026-10-14
-"""Fase 2: menú Ctrl+P · programa en la ventana principal · Ctrl+G lo cierra."""
+"""Fase 2: menú Ctrl+P · programa en la ventana principal · Ctrl+G lo cierra ·
+lanzador de aplicaciones gráficas Ctrl+X."""
 import sys, time, os, subprocess, shutil
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ptylib import Session, check_factory
@@ -156,6 +157,34 @@ check("Alt+P + Enter lanza", "PROG" in s2.scr.text())
 s2.send("\x1bg", 0.7)                     # Alt+G cierra
 s2.read(0.6)
 check("Alt+G cierra el programa", "NORMAL" in s2.scr.text() and "cerrado" in s2.scr.text())
+
+# ——— Ctrl+X: lanzador de aplicaciones gráficas (.desktop) ———
+s2.send("\x18", 0.6)                      # Ctrl+X
+s2.read(0.8)
+t = s2.scr.text()
+check("Ctrl+X abre el lanzador", "Aplicaciones gráficas" in t, t[:400])
+check("el lanzador filtra y avisa de las teclas", "> " in t and "Enter lanzar" in t, t[:400])
+s2.send("zzznoexiste", 0.5)               # escribir filtra
+s2.read(0.5)
+check("escribir en el lanzador filtra", "sin coincidencias" in s2.scr.text())
+s2.send("\x1b", 0.4)                      # Esc limpia el filtro
+s2.read(0.4)
+t = s2.scr.text()
+check("Esc limpia el filtro", "sin coincidencias" not in t and "Aplicaciones gráficas" in t)
+s2.send("\x1b", 0.4)                      # Esc de nuevo cierra
+s2.read(0.4)
+check("Esc cierra el lanzador", "Aplicaciones gráficas" not in s2.scr.text())
+# en el shell cede a readline, igual que el menú Ctrl+P
+s2.send("\x14", 0.6)                      # Ctrl+T → shell
+s2.read(0.5)
+s2.send("\x18", 0.6)                      # Ctrl+X dentro del shell
+s2.read(0.5)
+t = s2.scr.text()
+check("Ctrl+X en shell NO abre el lanzador", "Aplicaciones gráficas" not in t and "SHELL" in t)
+s2.send("\x14", 0.6)                      # Ctrl+T → vuelve al editor
+s2.read(0.5)
+check("Ctrl+T vuelve al editor", "NORMAL" in s2.scr.text())
+
 s2.send("\x1bq", 0.7)                     # Alt+Q sale
 check("Alt+Q sale", s2.wait_exit(5))
 with open(os.path.join(s2.work, "test.org")) as f:

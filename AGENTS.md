@@ -12,6 +12,9 @@ binario único sin dependencias de runtime:
   tanto el shell como los programas externos;
 - **menú `Ctrl+P`** que lanza programas (htop, neovim, tmux…) sobre su propio
   PTY, en el área del editor, con las teclas cedidas salvo las reservadas;
+- **lanzador `Ctrl+X`** de aplicaciones gráficas: lee los `.desktop` del
+  sistema y, sin sesión gráfica, lanza `startx /ruta/al/binario` en el shell
+  embebido (rama experimental);
 - navegador de ficheros (tree), panel de IA, ayuda integrada;
 - todo el render es una **rejilla de celdas propia pintada por diff**: nadie
   escribe a stdout salvo `render_frame()`.
@@ -24,11 +27,11 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (87 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (95 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 46 checks — smoke de fases anteriores
-python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize…
+python3 smoke_fase1.py     # 47 checks — smoke de fases anteriores
+python3 test_fase2.py      # 42 checks — menú, VT100, shell, Ctrl+J, resize, Ctrl+X…
 ```
 
 - **No hay tests en Rust**: la garantía son las suites Python, que abren el
@@ -39,17 +42,18 @@ python3 test_fase2.py      # 35 checks — menú, VT100, shell, Ctrl+J, resize�
 - **Regla de oro**: `cargo build` sin *warnings* + las 3 suites en verde
   **antes** de cada commit.
 
-## Estructura de `src/` (v2.0.0, ~4140 líneas)
+## Estructura de `src/` (v3.1.0, ~5600 líneas)
 
 | módulo | líneas | contenido |
 |---|---|---|
-| `main.rs` | 710 | declaraciones `mod` y prelude (`use x::*`); `main()`, `run()` (bucle de eventos), atajos globales (`Shortcut`, `shortcut_of`, `shortcut`), `resize_border`, `handle_help_key`, `handle_sudo_key`, avisos de kernel (`running_on_vt`, `lower_kernel_printk`) |
-| `app.rs` | 939 | estado central: `enum Mode`, `struct App` + **`impl App` completo** (teclado por modo, guardado, IA…), `layout()`, `file_writable()` |
-| `ui.rs` | 345 | `draw()` compone el frame completo; `draw_help()`, `HELP_TEXT` |
-| `frame.rs` | 149 | `Style`, `Cell`, `Frame` (rejilla), `render_frame()` (pintado por diff), `strip_ansi()` |
-| `term.rs` | 679 | `Term` + `PState`: emulador VT100 completo (`feed`, `parse_sgr`, scroll, alt screen, línea de comandos…), `draw()` |
-| `shell.rs` | 316 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `csi_shell`, `draw_shell_output`, `resize` |
-| `program.rs` | 222 | `Program` (PTY del programa), `MENU` (15 entradas: nombre visible + argv), `in_path()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` |
+| `main.rs` | 760 | declaraciones `mod` y prelude (`use x::*`); `main()`, `run()` (bucle de eventos), atajos globales (`Shortcut`, `shortcut_of`, `shortcut`), `resize_border`, `handle_help_key`, `handle_sudo_key`, avisos de kernel (`running_on_vt`, `lower_kernel_printk`) |
+| `app.rs` | 958 | estado central: `enum Mode`, `struct App` + **`impl App` completo** (teclado por modo, guardado, IA…), `layout()`, `file_writable()` |
+| `ui.rs` | 551 | `draw()` compone el frame completo; `draw_help()`, `HELP_TEXT` |
+| `frame.rs` | 153 | `Style`, `Cell`, `Frame` (rejilla), `render_frame()` (pintado por diff), `strip_ansi()` |
+| `term.rs` | 683 | `Term` + `PState`: emulador VT100 completo (`feed`, `parse_sgr`, scroll, alt screen, línea de comandos…), `draw()` |
+| `shell.rs` | 330 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `run_in_shell`, `csi_shell`, `draw_shell_output`, `resize` |
+| `program.rs` | 387 | `Program` (PTY del programa), `MENU` (15 entradas: nombre visible + argv), `in_path()`/`which()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` + **`draw_popup()`** (popup genérico que comparten el menú y el lanzador) |
+| `launcher.rs` | 526 | **lanzador de apps gráficas (Ctrl+X)**: parser de `.desktop` (`parse_desktop`, `desktop_apps`, escapes y códigos de campo), filtro difuso (`filtered`, `subseq`), `launch_app`/`launch_gui` (`startx` o `DISPLAY`, wrapper temporal), `handle_launcher_key`, `draw_launcher` |
 | `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` + **resaltado de sintaxis** de bloques SRC (`src_styles`, `lang_of`, `src_state_at`) |
 | `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd` **arrastra el cwd del proceso**, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
@@ -78,7 +82,11 @@ el split fue mecánico y deliberadamente aburrido.
 5. **Programas (Ctrl+P)**: `launch_program` crea otro PTY; la salida pasa por
    **`Term` (VT100 completo)** y se dibuja sobre el área del editor. Mientras
    está activo, sus teclas ceden salvo las reservadas (ver abajo).
-6. **Modos**: `Mode = Normal | Insert | Visual | Shell | Ai | Browser |
+6. **Apps gráficas (Ctrl+X)**: `launcher.rs` lee los `.desktop` del sistema y
+   manda el comando al shell embebido con `run_in_shell()` (`startx <binario>`
+   si no hay `DISPLAY`); `Terminal=true` se abre por `launch_program` como
+   las del menú. El popup lo comparte con el menú (`draw_popup`).
+7. **Modos**: `Mode = Normal | Insert | Visual | Shell | Ai | Browser |
    Program`. `top_mode` guarda el contexto (p. ej. shell abierto encima de un
    programa que sigue en segundo plano).
 
@@ -86,12 +94,15 @@ el split fue mecánico y deliberadamente aburrido.
 
 `shortcut_of()` (`main.rs`): **Ctrl o Alt + letra** (XOR; AltGr no cuenta).
 
-- `q` salir · `s` guardar · `p` menú · `g` cerrar programa · `t` terminal
+- `q` salir · `s` guardar · `p` menú · `x` lanzador de apps gráficas ·
+  `g` cerrar programa · `t` terminal
   (ida y vuelta: desde el shell vuelve al modo anterior) · `v` editor ·
   `f` tree · `a` IA · `n` nueva IA · `e` enviar · `r` redo ·
   `k` limpiar shell · `u`/`d` bordes
 - **`j` sólo con Ctrl**: `Ctrl+J` = volver al editor (`Shortcut::ToEditor`);
   `Alt+J` está sin asignar.
+- `p` y `x` ceden en modo SHELL (igual que `a`, `f`, `t`, `v`, `u`, `d`):
+  el shell es de readline/tmux.
 
 Reglas críticas que **no se deben romper**:
 
@@ -103,7 +114,7 @@ Reglas críticas que **no se deben romper**:
   el panel IA es imprimible y debe ceder.
 - `Enter` sobre un programa **ya en marcha** en el menú recupera el foco
   **sin relanzarlo**.
-- Con un programa activo sólo se consumen `Ctrl/Alt+Q/S/P/G`, `Ctrl+J` y
+- Con un programa activo sólo se consumen `Ctrl/Alt+Q/S/P/G/X`, `Ctrl+J` y
   `Shift+Tab`; el resto de teclas va al programa.
 
 ## Convenciones
@@ -114,9 +125,12 @@ Reglas críticas que **no se deben romper**:
   la nube sin que lo pida explícitamente el usuario**.
 - Cambios de UI o de atajos → actualizar también `HELP_TEXT` (`src/ui.rs`),
   `README.md` e `informe_ux_terminal.org`.
-- Menú: se edita la constante `MENU` (`program.rs`, 14 entradas); en pantalla
+- Menú: se edita la constante `MENU` (`program.rs`, 15 entradas); en pantalla
   sólo aparecen las que están en el PATH. Los tests sólo pueden asumir
   programas garantizados instalados (`htop`, `tmux`, `ranger`…).
+- Lanzador gráfico: la lista de apps viene de los `.desktop` del sistema, no
+  de una constante; los tests **no pueden asumir** ninguna app instalada
+  (sólo el título y el pie del popup, que son fijos).
 - Dependencias nuevas: sólo si se pide (van 3 en total).
 
 ## Documentación
@@ -179,13 +193,30 @@ que pigmacs sea *bonita*, con la elegancia que se puede lograr en una
    tecleado tal cual si no hay coincidencia. Ver §3 del informe.
    (+ bell y banda de estado de la IA, §3 #C.)
 
-**Definición de hecho:** `cargo build` 0 warnings + 87/87 checks en verde
+**Definición de hecho:** `cargo build` 0 warnings + 95/95 checks en verde
 antes de commit; la comprobación **en una consola VT real** (no en xterm)
 está pendiente de que la haga el usuario (el agente no tiene acceso a
 `/dev/ttyN`). `HELP_TEXT`, README e informe se actualizaron en v3.1.0.
 
-## Estado (2026-10-14)
+## Estado (última actualización: 2026-10-17)
 
+- **rama `experimental/lanzador-grafico` (sin fusionar)** — **`Ctrl+X` /
+  `Alt+X` lanzador de aplicaciones gráficas**: `src/launcher.rs` lee los
+  `.desktop` del sistema (`~/.local/share/applications` primero: pisan a las
+  del sistema), popup difuso con el mismo dibujo que el menú `Ctrl+P`
+  (`draw_popup()` se extrajo de `draw_menu` y lo comparten). Sin sesión
+  gráfica manda `startx /ruta/absoluta/al/binario` al shell embebido
+  (`run_in_shell()`, en el panel de terminal, con salida y errores visibles);
+  con `DISPLAY`/`WAYLAND_DISPLAY` el comando va directo. `Terminal=true` se
+  abre por `launch_program` (ventana principal, como el menú). Se resuelven
+  los códigos de campo (`%c`/`%k`/`%i`/`%%`; `%f`/`%u` se descartan) y, si
+  la app pide argumentos y no hay X, se genera un wrapper temporal
+  (`/tmp/pigmacs-launch-<pid>.sh`) porque `startx` sólo admite un cliente
+  sin argumentos. Se ocultan `Hidden`/`NoDisplay`, las que no son
+  `Type=Application`, las de otros escritorios y las de `TryExec` ausente.
+  Cero dependencias nuevas. Tests nuevos en `test_fase2.py` (7 checks, sólo
+  título/pie/filtro: no se puede asumir ninguna app instalada); el arranque
+  real de X está probado con un `startx` falso + `.desktop` propios.
 - **v3.1.0 — ronda de elegancia + pendientes #A/#C del informe**:
   `theme.rs` (paleta semántica de 16 colores, todo el pintado pasa por
   ella) · status con píldora de modo + `●` de cambios + identidad/fichero/
@@ -207,4 +238,4 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   (incluido el shell), `MENU` con argv (neovim→nvim, lynx/w3m con
   www.duckduckgo.com) y 15 programas (con mc como «Midnight Commander»).
 - Tag `v2.0.0` + commit `52facf6` **sólo locales**: git sólo local, sin push.
-- 87/87 checks en verde, 0 warnings.
+- 95/95 checks en verde, 0 warnings.

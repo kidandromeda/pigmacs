@@ -44,16 +44,29 @@ pub(crate) const MENU: [(&str, &[&str]); 15] = [
     ("w3m", &["w3m", "www.duckduckgo.com"]),
 ];
 
+/// ruta absoluta de un programa del PATH (o ruta directa si la trae)
+pub(crate) fn which(name: &str) -> Option<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    if name.contains('/') {
+        let p = std::path::PathBuf::from(name);
+        return if p.is_file() { Some(p) } else { None };
+    }
+    let path = env::var("PATH").ok()?;
+    path.split(':').find_map(|d| {
+        if d.is_empty() {
+            return None;
+        }
+        let p = std::path::Path::new(d).join(name);
+        fs::metadata(&p)
+            .ok()
+            .filter(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .map(|_| p)
+    })
+}
+
 /// ¿está el programa en el PATH y es ejecutable?
 pub(crate) fn in_path(name: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
-    let Ok(path) = env::var("PATH") else { return false };
-    path.split(':').any(|d| {
-        !d.is_empty()
-            && fs::metadata(std::path::Path::new(d).join(name))
-                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-                .unwrap_or(false)
-    })
+    which(name).is_some()
 }
 
 /// programa en ejecución sobre su propio PTY, dibujado en el área del editor
@@ -106,7 +119,7 @@ pub(crate) fn menu_entries() -> Vec<(&'static str, &'static [&'static str])> {
 }
 
 /// ¿contiene `q` como subsecuencia? (filtro difuso: "htp" → "htop")
-fn subseq(hay: &str, q: &str) -> bool {
+pub(crate) fn subseq(hay: &str, q: &str) -> bool {
     let mut it = hay.chars();
     q.chars().all(|c| it.any(|h| h == c))
 }
@@ -294,6 +307,32 @@ pub(crate) fn draw_menu(app: &mut App, bx: u16, area_w: u16, rows: u16, fr: &mut
             .min(area_w.saturating_sub(2))
             .max(24)
     };
+    draw_popup(
+        fr,
+        bx,
+        area_w,
+        rows,
+        " pigmacs · Lanzar programa ",
+        width,
+        &lines,
+    );
+}
+
+/// popup genérico centrado en el área principal (menú Ctrl+P y lanzador de
+/// apps gráficas): borde con acento, sombra sutil y selección en banda de
+/// color; `lines` es (texto, ¿es la fila seleccionada?)
+pub(crate) fn draw_popup(
+    fr: &mut Frame,
+    bx: u16,
+    area_w: u16,
+    rows: u16,
+    title: &str,
+    width: u16,
+    lines: &[(String, bool)],
+) {
+    // el título no puede salirse del popup (en terminales estrechas, el
+    // recorte lo hace el propio frame, que nunca pinta fuera de la rejilla)
+    let width = width.max(title.chars().count() as u16 + 2);
     let height = (lines.len() as u16 + 2).min(rows.saturating_sub(1));
     let x = bx + area_w.saturating_sub(width) / 2;
     let y = rows.saturating_sub(height) / 2;
@@ -307,8 +346,7 @@ pub(crate) fn draw_menu(app: &mut App, bx: u16, area_w: u16, rows: u16, fr: &mut
     }
 
     let bd = fg(ACCENT);
-    let title = " pigmacs · Lanzar programa ";
-    let dashes = width.saturating_sub(2 + title.len() as u16);
+    let dashes = width.saturating_sub(2 + title.chars().count() as u16);
     fr.text(x, y, &format!("┌{title}{}┐", "─".repeat(dashes as usize)), bold(ACCENT_HI));
     for (i, (line, is_cur)) in lines.iter().take(height.saturating_sub(2) as usize).enumerate() {
         let content: String = line.chars().take(width.saturating_sub(2) as usize).collect();
