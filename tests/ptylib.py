@@ -30,6 +30,52 @@ class Screen:
 
     def clear(self):
         self.rows = [[" "] * self.w for _ in range(self.h)]
+        # atributos por celda (fg, bg, reverse): permiten comprobar el cursor
+        # del shell, que es una celda con fondo de acento pintada en el frame
+        self.attr = [[(0, 0, False)] * self.w for _ in range(self.h)]
+        self.cur = (0, 0, False)
+
+    def attr_at(self, x, y):
+        return self.attr[y][x]
+
+    def sgr(self, params):
+        """SGR: sólo se recuerdan fg, bg y reverse como índice 0-255 (el
+        resto se ignora). crossterm emite la forma extendida `38;5;N`"""
+        fg, bg, rev = self.cur
+        ps = [int(p) if p else 0 for p in (params or "0").split(";")]
+        k = 0
+        while k < len(ps):
+            n = ps[k]
+            if n in (38, 48):
+                # color extendido: 38;5;N (paleta) · 38;2;r;g;b (truecolor)
+                if k + 1 < len(ps) and ps[k + 1] == 5 and k + 2 < len(ps):
+                    v = ps[k + 2]
+                    k += 2
+                elif k + 1 < len(ps) and ps[k + 1] == 2 and k + 4 < len(ps):
+                    v = 200 + ps[k + 2]
+                    k += 4
+                else:
+                    v = 0
+                if n == 38:
+                    fg = v
+                else:
+                    bg = v
+            elif n == 0:
+                fg, bg, rev = 0, 0, False
+            elif n == 7:
+                rev = True
+            elif n == 27:
+                rev = False
+            elif 30 <= n <= 37:
+                fg = n - 30
+            elif 90 <= n <= 97:
+                fg = n - 90 + 8
+            elif 40 <= n <= 47:
+                bg = n - 40
+            elif 100 <= n <= 107:
+                bg = n - 100 + 8
+            k += 1
+        self.cur = (fg, bg, rev)
 
     def put(self, c):
         if self.x >= self.w:
@@ -37,6 +83,7 @@ class Screen:
             self.y = min(self.y + 1, self.h - 1)
         if self.y < self.h and self.x < self.w:
             self.rows[self.y][self.x] = c
+            self.attr[self.y][self.x] = self.cur
         self.x += 1
 
     def feed(self, data):
@@ -63,12 +110,17 @@ class Screen:
                     elif fin == "K" and params in ("0", "1", "2"):
                         if params == "2":
                             self.rows[self.y] = [" "] * self.w
+                            self.attr[self.y] = [(0, 0, False)] * self.w
                         elif params == "1":
                             for k in range(min(self.x + 1, self.w)):
                                 self.rows[self.y][k] = " "
+                                self.attr[self.y][k] = (0, 0, False)
                         else:
                             for k in range(self.x, self.w):
                                 self.rows[self.y][k] = " "
+                                self.attr[self.y][k] = (0, 0, False)
+                    elif fin == "m":
+                        self.sgr(params)
                     i = j + 1
                     continue
                 elif i + 1 < len(s) and s[i + 1] == "]":

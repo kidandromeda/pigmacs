@@ -107,6 +107,17 @@ siguiente y el cursor quedaba pegado al borde superior.
 cursor hasta reunir el margen; las plegadas no ocupan pantalla). El texto se
 queda quieto al recorrer cabeceras. 3 checks nuevos en =smoke_fase1.py=.
 
+** 1.8 El cursor del shell no se veía (arreglado)
+
+*Síntoma:* en modo SHELL el cursor real del terminal se quedaba clavado en la
+esquina inferior izquierda del panel: no se veía dónde escribías y había que
+teclear a ciegas.
+
+*Arreglo:* =draw_shell_output()= ya conoce la posición del mini-emulador
+(línea y columna) y ahora pinta ahí un bloque con el acento (igual que el
+cursor del editor); el cursor real se oculta. El banco de pruebas reconoce la
+celda por su atributo (fondo 14) — 2 checks nuevos en =smoke_fase1.py=.
+
 * 2. Entregado en esta fase: menú de programas (fase 2)
 
 ** 2.1 Qué hace

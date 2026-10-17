@@ -4,12 +4,16 @@
 // Versión:    3.1.0
 // Fecha:      2026-10-14
 use crate::{
-    app::App,
+    app::{App, Mode},
     frame::{Frame, Style},
     term::parse_sgr,
+    theme::ACCENT_HI,
 };
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::{
+    event::{KeyCode, KeyEvent, KeyModifiers},
+    style::Color,
+};
 use portable_pty::{Child, MasterPty, PtySize};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -232,8 +236,7 @@ pub(crate) fn csi_shell(
 /// pinta la salida del shell en el frame interpretando \r, \b, \n y colores ANSI.
 /// Un mini-emulador de terminal: sin él, los \r de readline (historial con ↑)
 /// concatenaban dos comandos seguidos.
-pub(crate) fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, rows: u16, area_w: u16) {
-    let shell = app.shell.output.lock().unwrap();
+pub(crate) fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, rows: u16, area_w: u16) {    let shell = app.shell.output.lock().unwrap();
     let raw = String::from_utf8_lossy(&shell);
     // limitar a la cola reciente (el buffer crece sin límite)
     let mut tail: &str = &raw;
@@ -325,6 +328,31 @@ pub(crate) fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, row
                 break;
             }
             fr.put(bx + col as u16, y, ch, st);
+        }
+    }
+
+    // cursor del shell: bloque en la última línea del modelo, que es donde
+    // escribe readline. Antes se dejaba el cursor real clavado en una esquina
+    // (esquina inferior izquierda) y había que escribir a ciegas.
+    if app.mode == Mode::Shell && rows > 0 && area_w > 0 {
+        let y = y0 + (lines.len().saturating_sub(1).saturating_sub(start)) as u16;
+        if y < fr.h {
+            let cx = x.min(area_w as usize - 1) as u16;
+            let ch = lines
+                .last()
+                .and_then(|l| l.get(cx as usize))
+                .map(|c| c.0)
+                .unwrap_or(' ');
+            fr.put(
+                bx + cx,
+                y,
+                ch,
+                Style {
+                    fg: Some(Color::Black),
+                    bg: Some(ACCENT_HI),
+                    ..Default::default()
+                },
+            );
         }
     }
 }

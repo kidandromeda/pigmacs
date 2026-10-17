@@ -27,6 +27,27 @@ s.read(0.6)
 check("Ctrl+T → modo SHELL", "SHELL" in s.scr.text())
 check("prompt de bash visible", ":~$" in s.scr.flat() or "humano@" in s.scr.text())
 
+# el cursor del shell es un bloque pintado justo donde escribe el prompt
+# (antes el cursor real se quedaba quieto en la esquina inferior izquierda)
+def cursor_shell():
+    for y, l in enumerate(s.scr.lines()):
+        if "~$" in l:
+            return l.index("$") + 2, y
+    return None, None
+
+cx, cy = cursor_shell()
+check("el cursor del shell está tras el prompt",
+      cx is not None and s.scr.attr_at(cx, cy)[1] == 14,
+      (cx, cy, s.scr.attr_at(cx, cy) if cx is not None else None))
+s.send("ls", 0.5)
+s.read(0.5)
+cx, cy = cursor_shell()
+check("el cursor del shell avanza al escribir",
+      cx is not None and s.scr.attr_at(cx + 2, cy)[1] == 14,
+      (cx, cy, s.scr.attr_at(cx + 2, cy) if cx is not None else None))
+s.send("\x7f\x7f", 0.4)                  # borra el "ls" de prueba
+s.read(0.4)
+
 # Ctrl+J: escape al editor que funciona en tty reales (Shift+Tab no llega)
 s.send(b"\x0a", 0.6)
 s.read(0.5)

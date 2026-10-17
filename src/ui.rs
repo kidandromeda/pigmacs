@@ -93,6 +93,7 @@ TERMINAL
   Ctrl+B              prefijo de tmux: llega al programa de dentro
   Ctrl+A/E/K/R        reservados para readline (emacs) dentro del shell
   Ctrl+K              limpiar la pantalla (desde el editor/IA/tree)
+  el cursor se ve como un bloque de color en la línea del prompt
 
 TREE DE FICHEROS
   j k                 mover · l/Enter abrir · h subir
@@ -527,8 +528,10 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
         let x = (bx + (2 + app.ai_input.chars().count()) as u16).min(area_w.saturating_sub(1));
         queue!(out, Show, MoveTo(x, input_row))?;
     } else if app.mode == Mode::Shell {
-        let cy = (shell_top + shell_rows.saturating_sub(2)).min(h.saturating_sub(3));
-        queue!(out, Show, MoveTo(bx, cy))?;
+        // el cursor del shell va pintado como bloque dentro del frame, en la
+        // misma celda en la que escribe el prompt (si no, el real se quedaba
+        // quieto en la esquina inferior izquierda y se escribía a ciegas)
+        queue!(out, Hide, MoveTo(0, 0))?;
     } else if app.mode == Mode::Program {
         // el cursor del programa (htop, less…) donde él lo haya puesto
         let vis = app
