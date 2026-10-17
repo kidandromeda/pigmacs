@@ -493,7 +493,8 @@ pub(crate) fn x_poll(app: &mut App) -> Result<XEstado> {
             Ok(None) => {
                 while event::poll(Duration::from_millis(100))? {
                     if let Event::Key(k) = event::read()? {
-                        let ctrl_g = k.modifiers.contains(KeyModifiers::CONTROL)
+                        let ctrl_g = (k.modifiers.contains(KeyModifiers::CONTROL)
+                            || k.modifiers.contains(KeyModifiers::ALT))
                             && matches!(k.code, KeyCode::Char('g') | KeyCode::Char('G'));
                         if ctrl_g {
                             // primero se pide que salga; si insiste, SIGKILL
