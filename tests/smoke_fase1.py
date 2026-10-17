@@ -203,5 +203,30 @@ s2.send("\x1bq", 0.8)                    # Alt+Q → salir
 check("Alt+Q sale", s2.wait_exit(4))
 s2.close()
 
+# ——— sesión 3: las cabeceras plegadas no deben hacer saltar el texto ———
+# el scroll cuenta filas *visibles*: al pasar de una cabecera plegada a otra
+# el texto se queda quieto (antes, con filas lógicas, subía y dejaba el
+# cursor al principio de la ventana)
+org = []
+for i in range(1, 9):
+    org.append(f"* h{i}")
+    for c in range(1, 5):
+        org.append(f"  contenido {i}.{c}")
+    org.append("fin")
+s3 = Session(files={"cabeceras.org": "\n".join(org) + "\n"})
+s3.read(1.3)
+check("cabeceras: arranca con todo plegado",
+      "* h1" in s3.scr.text() and "* h8" in s3.scr.text())
+for _ in range(3):                       # bajar 3 cabeceras (h1 → h4)
+    s3.send("j", 0.25)
+s3.read(0.4)
+t = s3.scr.text()
+check("cabeceras: el texto no salta al bajar cabeceras",
+      "* h1" in t and "* h4" in t, t[:300])
+check("cabeceras: el cursor avanzó a la línea 19", "19:1" in t, t[-120:])
+s3.send("\x1bq", 0.7)                    # Alt+Q sale
+check("cabeceras: Alt+Q sale", s3.wait_exit(4))
+s3.close()
+
 print("\n%d fallos" % len(fails))
 sys.exit(1 if fails else 0)

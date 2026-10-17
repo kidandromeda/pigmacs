@@ -191,9 +191,27 @@ impl App {
         }
         if self.row < self.top {
             self.top = self.row;
+            return;
         }
-        if self.row >= self.top + visible {
-            self.top = self.row + 1 - visible;
+        // se cuentan filas *visibles*: las plegadas no ocupan pantalla. Con
+        // filas lógicas, pasar de una cabecera plegada a otra daba un `top`
+        // menor que la fila real, el texto saltaba hacia arriba y el cursor
+        // aparecía al principio de la ventana
+        let mut r = self.row;
+        let mut contadas = 0usize;
+        while contadas < visible && r >= self.top {
+            if !self.is_hidden(r) {
+                contadas += 1;
+                if contadas == visible && r > self.top {
+                    // `visible` filas visibles entre `r` y el cursor: el
+                    // cursor queda justo en la última del margen
+                    self.top = r;
+                }
+            }
+            if r == 0 {
+                break;
+            }
+            r -= 1;
         }
     }
 

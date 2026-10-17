@@ -91,6 +91,22 @@ Ver sección [[*4. Avisos del kernel (printk): explicación completa][4]] para e
 =F1= y =?= abrían la ayuda pero sólo =Esc= / =q= la cerraban; pulsar =F1=
 de nuevo no hacía nada. Ahora =F1= y =?= alternan.
 
+** 1.7 El texto saltaba al pasar por cabeceras org plegadas (arreglado)
+
+*Síntoma:* con un =.org= plegado, al bajar de una cabecera a la siguiente el
+texto se iba hacia arriba y el cursor aparecía al principio de la ventana
+(muy incómodo de leer).
+
+*Diagnóstico:* =ensure_visible()= calculaba el margen de scroll (75% del
+editor) con *filas lógicas* (=self.row= / =self.top=), pero el pintado salta
+las filas ocultas de los pliegues: con cabeceras plegadas, el =top= resultante
+caía dentro de una zona plegada, el pintado lo adelantaba a la cabecera
+siguiente y el cursor quedaba pegado al borde superior.
+
+*Arreglo:* el margen se cuenta con filas *visibles* (se retrocede desde el
+cursor hasta reunir el margen; las plegadas no ocupan pantalla). El texto se
+queda quieto al recorrer cabeceras. 3 checks nuevos en =smoke_fase1.py=.
+
 * 2. Entregado en esta fase: menú de programas (fase 2)
 
 ** 2.1 Qué hace
