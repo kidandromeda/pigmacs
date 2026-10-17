@@ -162,6 +162,16 @@ Al elegir una app:
   entera y vuelve el terminal. Los errores de `startx`/Xorg se ven
   directamente en la consola, como si lo hubieras ejecutado tú (el log
   completo de Xorg queda en `~/.local/share/xorg/`);
+
+mientras X tiene la consola, **`Ctrl+G` / `Alt+G` mata la app gráfica**:
+manda `SIGTERM` a `startx` y a todo su árbol de procesos (`xinit`, `Xorg`
+y el cliente) y pigmacs recupera la consola; si la app se resiste, una
+segunda pulsación manda `SIGKILL`. Así no dependes de que la aplicación
+tenga su propia opción de salir. Dentro de X el teclado lo lee el
+servidor: si tu consola no entrega la tecla a pigmacs, la pulsación no
+llegará (en ese caso cierra la app desde ella misma, o cambia de consola
+con `Ctrl+Alt+F2` y córtala con `pkill`).
+
 - si la `.desktop` lleva `Terminal=true`, la app se abre en la **ventana
   principal** sobre su propio PTY, igual que las del menú `Ctrl+P`.
 

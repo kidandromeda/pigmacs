@@ -29,11 +29,11 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (105 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (115 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 47 checks — smoke de fases anteriores
-python3 test_fase2.py      # 52 checks — menú, VT100, shell, Ctrl+J, resize, Ctrl+X…
+python3 smoke_fase1.py     # 53 checks — smoke de fases anteriores
+python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, Ctrl+X…
 ```
 
 - **No hay tests en Rust**: la garantía son las suites Python, que abren el
@@ -49,13 +49,13 @@ python3 test_fase2.py      # 52 checks — menú, VT100, shell, Ctrl+J, resize, 
 | módulo | líneas | contenido |
 |---|---|---|
 | `main.rs` | 776 | declaraciones `mod` y prelude (`use x::*`); `main()`, `run()` (bucle de eventos, con `x_poll()` al principio: X sobre la tty real), atajos globales (`Shortcut`, `shortcut_of`, `shortcut`), `resize_border`, `handle_help_key`, `handle_sudo_key`, avisos de kernel (`running_on_vt`, `lower_kernel_printk`) |
-| `app.rs` | 962 | estado central: `enum Mode`, `struct App` + **`impl App` completo** (teclado por modo, guardado, IA…), `layout()`, `file_writable()` |
-| `ui.rs` | 551 | `draw()` compone el frame completo; `draw_help()`, `HELP_TEXT` |
+| `app.rs` | 980 | estado central: `enum Mode`, `struct App` + **`impl App` completo** (teclado por modo, guardado, IA…), `layout()`, `file_writable()`, `ensure_visible()` (scroll por filas **visibles**) |
+| `ui.rs` | 561 | `draw()` compone el frame completo; `draw_help()`, `HELP_TEXT` |
 | `frame.rs` | 153 | `Style`, `Cell`, `Frame` (rejilla), `render_frame()` (pintado por diff), `strip_ansi()` |
 | `term.rs` | 683 | `Term` + `PState`: emulador VT100 completo (`feed`, `parse_sgr`, scroll, alt screen, línea de comandos…), `draw()` |
-| `shell.rs` | 330 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `run_in_shell`, `csi_shell`, `draw_shell_output`, `resize` |
+| `shell.rs` | 358 | `Shell` (PTY del shell): `key_bytes`/`key_bytes_mode` (tecla→bytes), `send_key_to_shell`, `run_in_shell`, `csi_shell`, `draw_shell_output` (pinta el **cursor** del shell como bloque), `resize` |
 | `program.rs` | 387 | `Program` (PTY del programa), `MENU` (15 entradas: nombre visible + argv), `in_path()`/`which()`; menú: `menu_entries`, `launch_program`, `close_program`, `handle_menu_key`, `draw_menu` + **`draw_popup()`** (popup genérico que comparten el menú y el lanzador) |
-| `launcher.rs` | 626 | **lanzador de apps gráficas (Ctrl+X)**: parser de `.desktop` (`parse_desktop`, `desktop_apps`, escapes y códigos de campo), filtro difuso (`filtered`, `subseq`), `launch_app`/`launch_gui` (`startx` directo en tty real o `DISPLAY` por el shell, wrapper temporal), `x_poll`/`volver_a_pigmacs` (ciclo de vida de la sesión X), `handle_launcher_key`, `draw_launcher` |
+| `launcher.rs` | 695 | **lanzador de apps gráficas (Ctrl+X)**: parser de `.desktop` (`parse_desktop`, `desktop_apps`, escapes y códigos de campo), filtro difuso (`filtered`, `subseq`), `launch_app`/`launch_gui` (`startx` directo en tty real o `DISPLAY` por el shell, wrapper temporal), `x_poll`/`volver_a_pigmacs` (ciclo de vida de la sesión X) + `arbol_de`/`matar_arbol` (**Ctrl+G** mata la sesión X entera por `/proc`), `handle_launcher_key`, `draw_launcher` |
 | `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` + **resaltado de sintaxis** de bloques SRC (`src_styles`, `lang_of`, `src_state_at`) |
 | `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd` **arrastra el cwd del proceso**, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
@@ -100,6 +100,11 @@ el split fue mecánico y deliberadamente aburrido.
 7. **Modos**: `Mode = Normal | Insert | Visual | Shell | Ai | Browser |
    Program`. `top_mode` guarda el contexto (p. ej. shell abierto encima de un
    programa que sigue en segundo plano).
+8. **Ctrl+G** cierra el programa del menú (`Ctrl+P`) o **mata la app gráfica
+   cuando X tiene la consola**: `arbol_de()` recorre el `ppid` de `/proc`
+   (startx → xinit → Xorg y el cliente) y `matar_arbol()` le manda `SIGTERM`
+   con el `kill` del sistema; una segunda pulsación manda `SIGKILL`. Sin
+   `libc` ni dependencias nuevas.
 
 ## Atajos globales
 
@@ -204,23 +209,23 @@ que pigmacs sea *bonita*, con la elegancia que se puede lograr en una
    tecleado tal cual si no hay coincidencia. Ver §3 del informe.
    (+ bell y banda de estado de la IA, §3 #C.)
 
-**Definición de hecho:** `cargo build` 0 warnings + 105/105 checks en verde
+**Definición de hecho:** `cargo build` 0 warnings + 115/115 checks en verde
 antes de commit; la comprobación **en una consola VT real** (no en xterm)
 está pendiente de que la haga el usuario (el agente no tiene acceso a
 `/dev/ttyN`). `HELP_TEXT`, README e informe se actualizaron en v3.1.0.
 
 ## Estado (última actualización: 2026-10-17)
 
-- **rama `experimental/lanzador-grafico` (sin fusionar)** — **`Ctrl+X` /
-  `Alt+X` lanzador de aplicaciones gráficas**: `src/launcher.rs` lee los
-  `.desktop` del sistema (`~/.local/share/applications` primero: pisan a las
-  del sistema), popup difuso con el mismo dibujo que el menú `Ctrl+P`
+- **`experimental/lanzador-grafico` fusionada en `main`** (merge `2add39c`) —
+  **`Ctrl+X` / `Alt+X` lanzador de aplicaciones gráficas**: `src/launcher.rs`
+  lee los `.desktop` del sistema (`~/.local/share/applications` primero: pisan
+  a las del sistema), popup difuso con el mismo dibujo que el menú `Ctrl+P`
   (`draw_popup()` se extrajo de `draw_menu` y lo comparten). Con
   `DISPLAY`/`WAYLAND_DISPLAY` el comando va al shell embebido
   (`run_in_shell()`). **Sin sesión gráfica en una tty real, pigmacs lanza
   `startx` él mismo heredando la consola** (`app.x = Some(XSesion{…})`; `x_poll()`
-  al principio del bucle no pinta nada ni lee teclas mientras X tenga la
-  consola y, al terminar, restaura pantalla alterna + raw mode + `force_full`):
+  al principio del bucle no pinta nada mientras X tenga la consola y, al
+  terminar, restaura pantalla alterna + raw mode + `force_full`):
   así `tty` reporta `/dev/ttyN` y Xorg recibe `-keeptty`. **Corrección tras
   probarlo en consola real**: la primera versión mandaba `startx` al shell
   embebido y no funcionaba («connection refused» / bloqueado) porque ese pty
@@ -232,10 +237,26 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   cliente sin argumentos. Se ocultan `Hidden`/`NoDisplay`, las que no son
   `Type=Application`, las de otros escritorios y las de `TryExec` ausente.
   Cero dependencias nuevas. Tests nuevos en `test_fase2.py`: 7 checks de
-  popup/filtro (no se puede asumir ninguna app instalada) + 10 del camino de
+  popup/filtro (no se puede asumir ninguna app instalada) + 13 del camino de
   consola (un `startx` falso y `.desktop` propios; el gancho
   `PIGMACS_FAKE_VT`, sólo para las suites, simula la tty porque ese camino no
-  existe en una PTY): hereda la tty, wrapper, vuelta a pigmacs al terminar.
+  existe en una PTY): hereda la tty, wrapper, vuelta a pigmacs al terminar y
+  **Ctrl+G mata el árbol de la sesión X** (el `startx` falso duerme 3 s y
+  deja una segunda marca si llega a su final: sin Ctrl+G la marca aparece).
+- **Ronda de detalles «irritables» (2026-10-17)**: `Ctrl+G`/`Alt+G` mata la
+  app gráfica cuando X tiene la consola (`arbol_de`/`matar_arbol` por `/proc`
+  → `SIGTERM`, y `SIGKILL` a la segunda pulsación) · el **cursor del shell**
+  se pinta como bloque en la celda donde escribe el prompt (antes el cursor
+  real se quedaba clavado en la esquina inferior izquierda y había que
+  teclear a ciegas; `ptylib.py` aprendió a recordar el SGR de cada celda
+  para poder comprobarlo) · el **scroll del editor** cuenta filas *visibles*:
+  pasar de una cabecera org plegada a otra ya no sube el texto ni deja el
+  cursor arriba (`ensure_visible`). Informe §1.7, §1.8 y §3.
+  *No se hicieron* (se explicaron al usuario): ventana a pantalla completa
+  (haría falta un gestor de ventanas: X sin WM abre al tamaño que pide la
+  app) y el popup de ayuda al mantener `Ctrl` (en una tty el kernel no
+  entrega la pulsación/suelta de un modificador solo: sólo con el protocolo
+  de teclado kitty, que la consola no implementa).
 - **v3.1.0 — ronda de elegancia + pendientes #A/#C del informe**:
   `theme.rs` (paleta semántica de 16 colores, todo el pintado pasa por
   ella) · status con píldora de modo + `●` de cambios + identidad/fichero/
@@ -257,4 +278,4 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   (incluido el shell), `MENU` con argv (neovim→nvim, lynx/w3m con
   www.duckduckgo.com) y 15 programas (con mc como «Midnight Commander»).
 - Tag `v2.0.0` + commit `52facf6` **sólo locales**: git sólo local, sin push.
-- 105/105 checks en verde, 0 warnings.
+- 115/115 checks en verde, 0 warnings.

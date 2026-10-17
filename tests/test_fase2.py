@@ -204,14 +204,21 @@ with open(os.path.join(faixa, "applications", "pigmacs-fake.desktop"), "w") as f
     f.write("[Desktop Entry]\nType=Application\nName=PigmacsFakeApp\nExec=/bin/true\n")
 with open(os.path.join(faixa, "applications", "pigmacs-fake-args.desktop"), "w") as f:
     f.write("[Desktop Entry]\nType=Application\nName=PigmacsFakeArgs\nExec=/bin/echo hola desde el wrapper\n")
+with open(os.path.join(faixa, "applications", "pigmacs-fake-kill.desktop"), "w") as f:
+    f.write("[Desktop Entry]\nType=Application\nName=PigmacsFakeKill\nExec=/bin/true\n")
 marca = os.path.join(faixa, "marca.txt")
+marca_fin = os.path.join(faixa, "marca_fin.txt")
 with open(os.path.join(faixa, "bin", "startx"), "w") as f:
     f.write("#!/bin/sh\n"
             "{ echo \"tty=$(tty)\"; echo \"args=$*\"; } > \"$PIGMACS_MARCA\"\n"
-            "\"$1\"\nsleep 3\nexit 0\n")
+            "\"$1\"\n"
+            "sleep 3\n"
+            "echo fin > \"$PIGMACS_MARCA_FIN\"\n"
+            "exit 0\n")
 os.chmod(os.path.join(faixa, "bin", "startx"), 0o755)
 os.environ["PIGMACS_FAKE_VT"] = "1"
 os.environ["PIGMACS_MARCA"] = marca
+os.environ["PIGMACS_MARCA_FIN"] = marca_fin
 os.environ["PATH"] = os.path.join(faixa, "bin") + os.pathsep + os.environ["PATH"]
 os.environ["XDG_DATA_HOME"] = faixa
 os.environ["XDG_DATA_DIRS"] = faixa      # esconde los .desktop del sistema
@@ -260,6 +267,32 @@ s3.read(2.5)
 s3.repaint()
 check("CON tty: la segunda app también vuelve a pigmacs", "terminó" in s3.scr.text(),
       [l[-70:] for l in s3.scr.lines()[-2:]])
+# ——— Ctrl+G mata la app gráfica (sin esperar a que ella quiera salir) ———
+s3.send("\x18", 0.6)                      # Ctrl+X otra vez
+s3.read(0.8)
+os.remove(marca)                          # marca fresca para el 3er arranque
+if os.path.exists(marca_fin):
+    os.remove(marca_fin)
+s3.send("fakekill", 0.5)
+s3.read(0.5)
+check("CON tty: el tercer .desktop se puede filtrar",
+      "▸ PigmacsFakeKill" in s3.scr.text(), s3.scr.text()[:400])
+s3.send("\r", 0.3)                        # Enter → startx (que duerme 3 s)
+for _ in range(30):
+    if os.path.exists(marca):
+        break
+    time.sleep(0.1)
+check("CON tty: la app está en marcha (antes de Ctrl+G)", os.path.exists(marca))
+s3.send("\x07", 0.2)                      # Ctrl+G → mata la sesión X entera
+s3.read(1.2)
+check("CON tty: Ctrl+G mata la app gráfica y vuelve a pigmacs",
+      "PigmacsFakeKill" in s3.scr.text() and "terminó" in s3.scr.text(),
+      [l[-70:] for l in s3.scr.lines()[-2:]])
+s3.read(3.0)                              # de sobra para el final natural del fake
+check("CON tty: Ctrl+G no esperó a que la app saliera sola",
+      not os.path.exists(marca_fin),
+      "el fake llegó a su final: no lo mató Ctrl+G")
+
 s3.send("\x1bq", 0.7)                     # Alt+Q sale
 check("CON tty: Alt+Q sale", s3.wait_exit(5))
 s3.close()

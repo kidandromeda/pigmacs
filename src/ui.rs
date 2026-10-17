@@ -137,6 +137,10 @@ LANZADOR DE APLICACIONES GRÁFICAS (Ctrl+X)
   cerrar la app, vuelve pigmacs con la pantalla repintada; los errores
   de X se ven en la consola; si ya hay DISPLAY, el comando va al shell
   embebido
+  con X en la consola, Ctrl+G (Alt+G) mata la app: SIGTERM a startx y a
+  todo su árbol (Xorg incluido); si insiste, otra vez Ctrl+G = SIGKILL.
+  Ojo: dentro de X el teclado es del servidor; si la consola no entrega
+  la tecla a pigmacs, no llegará y habrá que cerrar la app desde ella
   los argumentos del .desktop y los códigos de campo (%f, %u, %c, %k,
   %i, %%) se resuelven (si la app pide argumentos se genera un wrapper
   temporal: startx sólo admite un cliente sin argumentos)

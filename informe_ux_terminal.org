@@ -223,7 +223,7 @@ simples). =Esc= limpia/cierra.
 
 ** DONE [#A] Lanzador de aplicaciones gráficas (Ctrl+X)
 
-*Estado (rama =experimental/lanzador-grafico=):* ***entregado.*** =Ctrl+X=
+*Estado (v3.1.0, fusionado en =main=):* ***entregado.*** =Ctrl+X=
 / =Alt+X= abre un popup con las aplicaciones del sistema leídas de los
 =.desktop= (=~/.local/share/applications=, =/usr/local/share/applications=,
 =/usr/share/applications=; los del usuario pisan los del sistema). Mismo
@@ -239,8 +239,15 @@ limpia/cierra.
   app y, al cerrarla, pigmacs repinta la pantalla entera y vuelve el
   terminal; los errores de =startx= / Xorg se ven directamente en la
   consola (el log completo queda en =~/.local/share/xorg/=). Mientras X
-  tiene la consola pigmacs no pinta nada y las teclas se descartan
-  (=x_poll=). *Corregido tras probarlo en consola real*: la primera
+  tiene la consola pigmacs no pinta nada; =Ctrl+G= (=Alt+G=)
+  **mata la app gráfica**: primero =SIGTERM= y, si se resiste, =SIGKILL=
+  a la pulsación siguiente. La señal va a *todo el árbol de procesos*
+  (=startx= → =xinit= → =Xorg= y el cliente), que se recorre leyendo el
+  =ppid= de =/proc= y se manda con el =kill= del sistema: sin =libc= ni
+  dependencias nuevas. Así no hace falta que la aplicación tenga su
+  propia opción de salir. (Dentro de X el teclado lo lee el servidor: si
+  la consola no entrega la tecla a pigmacs, la pulsación no llega.)
+  *Corregido tras probarlo en consola real*: la primera
   versión mandaba el comando al shell embebido, pero ese =pty= vive en un
   =/dev/pts= — sin =tty= real =startx= no le pasa =-keeptty= al servidor
   X y el arranque moría con «connection refused» (o se quedaba esperando
@@ -257,8 +264,8 @@ limpia/cierra.
   =Type=Application=, las de otros escritorios (=OnlyShowIn= /
   =NotShowIn=) y las cuyo =TryExec= no está en el PATH.
 - Sin dependencias nuevas: el parser de =.desktop= (con sus escapes y su
-  tokenización de comillas) es nuestro (=src/launcher.rs=, ~625 líneas).
-- Tests: 10 checks nuevos en =test_fase2.py= con un =startx= falso y
+  tokenización de comillas) es nuestro (=src/launcher.rs=, ~695 líneas).
+- Tests: 13 checks nuevos en =test_fase2.py= con un =startx= falso y
   =.desktop= propios; como el camino directo sólo se da en consola real,
   el gancho =PIGMACS_FAKE_VT= (sólo para las suites) simula la =tty=.
 

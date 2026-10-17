@@ -23,7 +23,7 @@ use crate::{
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
-    event::{self, KeyCode, KeyEvent, KeyModifiers},
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -32,7 +32,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 /// una aplicación del sistema, sacada de su fichero .desktop
@@ -417,6 +417,8 @@ pub(crate) fn launch_app(app: &mut App, e: &AppEntry) {
 pub(crate) struct XSesion {
     pub(crate) nombre: String,
     pub(crate) child: Child,
+    // Ctrl+G ya mandó SIGTERM: la siguiente pulsación manda SIGKILL
+    pub(crate) intentos: u8,
 }
 
 pub(crate) enum XEstado {
@@ -425,17 +427,81 @@ pub(crate) enum XEstado {
     Terminada(String), // X ha terminado: texto para el status
 }
 
+// ————— matar la app gráfica: Ctrl+G mientras X tiene la consola —————
+
+/// pids de `raiz` y de todos sus descendientes (startx → xinit → Xorg y el
+/// cliente), recorriendo el ppid de /proc. Sin libc ni dependencias nuevas
+fn arbol_de(raiz: u32) -> Vec<u32> {
+    let mut ppid_de: Vec<(u32, u32)> = Vec::new();
+    if let Ok(rd) = fs::read_dir("/proc") {
+        for e in rd.flatten() {
+            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+                continue;
+            };
+            let Ok(st) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                continue;
+            };
+            // el nombre del proceso (campo 2) va entre paréntesis y puede
+            // llevar espacios: los campos se cuentan desde el último «)»
+            let Some(pos) = st.rfind(')') else { continue };
+            if let Some(ppid) = st[pos + 1..]
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse::<u32>().ok())
+            {
+                ppid_de.push((pid, ppid));
+            }
+        }
+    }
+    let mut fuera = vec![raiz];
+    let mut i = 0;
+    while i < fuera.len() {
+        let padre = fuera[i];
+        for &(pid, ppid) in &ppid_de {
+            if ppid == padre && !fuera.contains(&pid) {
+                fuera.push(pid);
+            }
+        }
+        i += 1;
+    }
+    fuera
+}
+
+/// manda `senal` al árbol entero de `raiz`. `kill` es un binario estándar
+/// (util-linux): no se añaden dependencias. La salida se descarta: si algún
+/// proceso se adelanta y muere solo, kill avisaría por stderr en la consola
+fn matar_arbol(raiz: u32, senal: &str) {
+    let pids = arbol_de(raiz);
+    let mut cmd = Command::new("kill");
+    cmd.arg(format!("-{senal}"));
+    for p in &pids {
+        cmd.arg(p.to_string());
+    }
+    let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
 /// mientras X ocupa la consola, pigmacs no pinta nada (su frame era la
-/// pantalla y X la ha pisado) y las teclas que lleguen se descartan; al
-/// terminar se vuelve a la pantalla alterna y se repinta entera
+/// pantalla y X la ha pisado) y las teclas que lleguen se descartan — salvo
+/// Ctrl+G, que mata la app gráfica (startx y todo su árbol) y vuelve a
+/// pigmacs. Ojo: en X el teclado es del servidor; que la tecla llegue aquí
+/// depende de que la consola siga entregando teclas a la tty
 pub(crate) fn x_poll(app: &mut App) -> Result<XEstado> {
     // se consulta el hijo sin mantener la referencia (para poder hacer take())
     let (estado, ok) = match app.x.as_mut() {
         Some(x) => match x.child.try_wait() {
-            // X sigue vivo: teclas fuera, que ahora las maneja él
+            // X sigue vivo: las teclas son suyas
             Ok(None) => {
                 while event::poll(Duration::from_millis(100))? {
-                    let _ = event::read()?;
+                    if let Event::Key(k) = event::read()? {
+                        let ctrl_g = k.modifiers.contains(KeyModifiers::CONTROL)
+                            && matches!(k.code, KeyCode::Char('g') | KeyCode::Char('G'));
+                        if ctrl_g {
+                            // primero se pide que salga; si insiste, SIGKILL
+                            let senal = if x.intentos == 0 { "TERM" } else { "KILL" };
+                            matar_arbol(x.child.id(), senal);
+                            x.intentos = x.intentos.saturating_add(1);
+                        }
+                    }
                 }
                 return Ok(XEstado::EnMarcha);
             }
@@ -526,13 +592,16 @@ fn launch_gui(app: &mut App, e: &AppEntry, argv: Vec<String>) {
                 app.x = Some(XSesion {
                     nombre: e.name.clone(),
                     child,
+                    intentos: 0,
                 });
                 // la consola deja de ser de pigmacs: salir de la pantalla
                 // alterna (en una VT real el kernel la ignora, en emuladores no)
                 let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
                 let _ = io::stdout().flush();
-                app.status =
-                    format!("«{}» en X · la app ocupa la consola; al cerrarla vuelves a pigmacs", e.name);
+                app.status = format!(
+                    "«{}» en X · Ctrl+G la mata · al cerrarla vuelves a pigmacs",
+                    e.name
+                );
             }
             Err(err) => app.status = format!("No se pudo lanzar «{}»: {err}", e.name),
         }
