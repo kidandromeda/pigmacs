@@ -185,10 +185,13 @@ PORTAPAPELES (ANILLO DE MUERTES)
   p / P                pegar después / antes del cursor
   " + letra            registro con nombre (a-z): "ay copia, "ap pega
   " + dígito           ranura del anillo (0 = lo más reciente): "0p
-  Ctrl+Y               historial del anillo: j/k elige, Enter pega
-  F2                   captura la ventana visible (editor, shell o programa)
-                       y la abre aquí como solo lectura; en tmux usa
-                       capture-pane, así que incluye el scrollback
+  Ctrl+Y               historial del anillo: j/k elige, Enter pega; también
+                       lista los registros con nombre ("a, "b…) y en
+                       INSERT pega ahí mismo (sin salir a NORMAL)
+  F2                   captura la ventana (editor, shell o programa) y la
+                       abre aquí como solo lectura; incluye el scrollback
+                       (shell: 64 KB · programas: 2000 filas · tmux:
+                       capture-pane)
   Ctrl+E               sigue siendo enviar al shell, NO el portapapeles
   al copiar se emite OSC 52 (en tty real no hace nada; en tmux/xterm con
   integración copia también al portapapeles del sistema)

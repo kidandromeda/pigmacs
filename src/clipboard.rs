@@ -112,7 +112,10 @@ impl App {
         };
         self.registro = None;
         self.push_undo("pegado");
-        let linewise = txt.ends_with('\n') && !txt.trim_end_matches('\n').contains('\n');
+        // en INSERT se pega siempre "en el cursor" (aunque venga de yy)
+        let linewise = self.mode != Mode::Insert
+            && txt.ends_with('\n')
+            && !txt.trim_end_matches('\n').contains('\n');
         if linewise {
             // yy: una línea nueva, encima (P) o debajo (p)
             let fila = if antes { self.row } else { self.row + 1 };
@@ -136,7 +139,12 @@ impl App {
 
     /// inserta varias líneas en la posición del cursor (pegado no linewise)
     fn insertar_texto(&mut self, partes: &[String], antes: bool) {
-        let col = if antes { self.col } else { self.col + 1 };
+        // en INSERT el cursor está ENTRE caracteres: se inserta ahí mismo
+        let col = if antes || self.mode == Mode::Insert {
+            self.col
+        } else {
+            self.col + 1
+        };
         let chars: Vec<char> = self.lines[self.row].chars().collect();
         let col = col.min(chars.len());
         let prefijo: String = chars[..col].iter().collect();
@@ -164,12 +172,32 @@ impl App {
     }
 }
 
+/// entradas del popup en orden de pantalla: primero los registros con
+/// nombre (a-z, ordenados) y después el anillo del más antiguo al más nuevo.
+/// Devuelve (etiqueta, texto) para pintar y pegar.
+pub(crate) fn anillo_entradas(app: &App) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut nombres: Vec<char> = app.nombrados.keys().copied().collect();
+    nombres.sort();
+    for c in nombres {
+        if let Some(t) = app.nombrados.get(&c) {
+            out.push((format!("\"{c}"), t.clone()));
+        }
+    }
+    let ultimo = app.anillo.len().saturating_sub(1);
+    for (i, t) in app.anillo.iter().enumerate() {
+        // ranura = distancia al más reciente (0 = último copiado)
+        out.push((format!("#{}", ultimo - i), t.clone()));
+    }
+    out
+}
+
 /// teclas del popup del anillo (`Ctrl+Y`): elegir y pegar
 pub(crate) fn handle_anillo_key(app: &mut App, k: KeyEvent) {
     if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
         return;
     }
-    let n = app.anillo.len();
+    let n = anillo_entradas(app).len();
     match k.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') => app.anillo_open = false,
         KeyCode::Char('j') | KeyCode::Down => {
@@ -183,8 +211,7 @@ pub(crate) fn handle_anillo_key(app: &mut App, k: KeyEvent) {
         KeyCode::Char('g') => app.anillo_cursor = 0,
         KeyCode::Char('G') => app.anillo_cursor = n.saturating_sub(1),
         KeyCode::Enter => {
-            // el índice del popup va del más antiguo al más reciente
-            if let Some(txt) = app.anillo.get(app.anillo_cursor).cloned() {
+            if let Some((_, txt)) = anillo_entradas(app).get(app.anillo_cursor).cloned() {
                 app.anillo_open = false;
                 app.registro = None;
                 pegar_texto(app, &txt);
@@ -221,20 +248,21 @@ pub(crate) fn pegar_texto(app: &mut App, txt: &str) {
 /// popup con el historial del anillo: el más reciente abajo
 pub(crate) fn draw_anillo(app: &mut App, bx: u16, area_w: u16, rows: u16, fr: &mut Frame) {
     let mut lines: Vec<(String, bool)> = Vec::new();
-    if app.anillo.is_empty() {
+    let entradas = anillo_entradas(app);
+    if entradas.is_empty() {
         lines.push(("el anillo está vacío".into(), false));
     }
-    for (i, txt) in app.anillo.iter().enumerate() {
+    for (i, (etiqueta, txt)) in entradas.iter().enumerate() {
         // una línea por entrada: saltos y tabuladores a espacios
         let plano: String = txt
             .chars()
             .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
             .collect();
-        let corto: String = plano.chars().take(46).collect();
+        let corto: String = plano.chars().take(42).collect();
         let n = txt.chars().count();
         lines.push((
             format!(
-                "{}[{n:>4}] {corto}",
+                "{}[{n:>4}] {etiqueta:<3} {corto}",
                 if i == app.anillo_cursor { "▸ " } else { "  " }
             ),
             i == app.anillo_cursor,

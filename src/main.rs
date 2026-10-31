@@ -744,11 +744,11 @@ pub(crate) fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
         // Ctrl+Y cede en el shell: readline lo usa para pegar (yank)
         Shortcut::Anillo if in_shell => return Ok(None),
         Shortcut::Anillo => {
-            if app.anillo.is_empty() {
+            if app.anillo.is_empty() && app.nombrados.is_empty() {
                 app.status = "El anillo está vacío · y copia · dd corta".into();
             } else {
                 app.anillo_open = true;
-                app.anillo_cursor = app.anillo.len() - 1;
+                app.anillo_cursor = anillo_entradas(app).len().saturating_sub(1);
             }
         }
         Shortcut::CloseProgram if in_shell => return Ok(None),

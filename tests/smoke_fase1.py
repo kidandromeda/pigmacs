@@ -418,5 +418,50 @@ s6.send("\x1bq", 0.7)
 check("clip: Alt+Q sale", s6.wait_exit(4))
 s6.close()
 
+# ——— sesión 7: registros en el popup, INSERT y scrollback del shell ———
+s7 = Session(files={"clip2.org": "alfa\nbeta\n"})
+s7.read(1.3)
+s7.send('"', 0.25)
+s7.send("a", 0.25)
+s7.send("y", 0.15)
+s7.send("y", 0.35)                      # "ayy: al registro a (el anillo sigue vacío)
+s7.send("\x19", 0.5)                    # Ctrl+Y abre el popup igualmente
+s7.read(0.5)
+t = s7.scr.text()
+check("clip2: el popup lista los registros", "portapapeles · anillo" in t and '"a' in t
+      and "alfa" in t, t[-200:])
+s7.send("\r", 0.4)                      # Enter pega el registro elegido
+s7.read(0.5)
+check("clip2: el popup pega el registro", "alfa" in s7.scr.text())
+# pegar en INSERT: se inserta en el cursor, sin línea fantasma
+s7.send("i", 0.3)
+s7.send("\x19", 0.4)
+s7.send("\r", 0.4)
+s7.read(0.5)
+t = s7.scr.text()
+filas_alfa = sum(1 for l in s7.scr.lines() if "alfa" in l)
+check("clip2: pega en INSERT", filas_alfa >= 2 and "│    4" in t, t[:200])
+s7.send("\x1b", 0.3)                    # salir de INSERT
+s7.read(0.3)
+# scrollback del shell: F2 captura más de la cola visible (> 8 KB)
+s7.send("\x14", 0.5)                    # Ctrl+T -> shell
+s7.send("echo MARCA-INICIO\r", 0.6)
+s7.send("seq 1 3000\r", 2.2)
+s7.send("\x1bOQ", 1.6)                  # F2
+s7.read(1.2)
+t = s7.scr.text()
+check("clip2: F2 captura el scrollback del shell",
+      "Captura de shell" in t, t[-260:])
+s7.send("/", 0.3)
+for ch in "MARCA-INICIO":
+    s7.send(ch, 0.06)
+s7.send("\r", 0.7)
+s7.read(0.7)
+check("clip2: la captura llega al principio",
+      "MARCA-INICIO" in s7.scr.text(), s7.scr.text()[-160:])
+s7.send("\x1bq", 0.7)
+check("clip2: Alt+Q sale", s7.wait_exit(4))
+s7.close()
+
 print("\n%d fallos" % len(fails))
 sys.exit(1 if fails else 0)

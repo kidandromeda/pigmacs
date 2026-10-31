@@ -237,7 +237,8 @@ pub(crate) fn csi_shell(
 /// Un mini-emulador de terminal: sin él, los \r de readline (historial con ↑)
 /// concatenaban dos comandos seguidos.
 pub(crate) fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, rows: u16, area_w: u16) {
-    let (lines, x) = shell_lineas(app);
+    // en pantalla basta con la cola reciente; la captura (F2) pide más
+    let (lines, x) = shell_lineas(app, 8192, 2048);
 
     let start = lines.len().saturating_sub(rows as usize);
     for (r, line) in lines[start..].iter().enumerate() {
@@ -282,13 +283,17 @@ pub(crate) fn draw_shell_output(app: &App, fr: &mut Frame, bx: u16, y0: u16, row
 /// interpreta la salida del shell (\r, \b, \n y colores ANSI) y devuelve
 /// sus líneas y la columna del cursor. Lo comparten el pintado y la captura
 /// de la ventana (`F2`), para que "lo que ves" y "lo que copias" coincidan.
-fn shell_lineas(app: &App) -> (Vec<Vec<(char, Style)>>, usize) {
+fn shell_lineas(
+    app: &App,
+    max_bytes: usize,
+    max_lineas: usize,
+) -> (Vec<Vec<(char, Style)>>, usize) {
     let shell = app.shell.output.lock().unwrap();
     let raw = String::from_utf8_lossy(&shell);
     // limitar a la cola reciente (el buffer crece sin límite)
     let mut tail: &str = &raw;
-    if raw.len() > 8192 {
-        let start = raw.len() - 8192;
+    if raw.len() > max_bytes {
+        let start = raw.len() - max_bytes;
         if raw.is_char_boundary(start) {
             tail = &raw[start..];
         }
@@ -358,17 +363,18 @@ fn shell_lineas(app: &App) -> (Vec<Vec<(char, Style)>>, usize) {
                 i += 1;
             }
         }
-        if lines.len() > 2048 {
-            let drop = lines.len() - 1024;
+        if lines.len() > max_lineas {
+            let drop = lines.len() - max_lineas / 2;
             lines.drain(..drop);
         }
     }
     (lines, x)
 }
 
-/// texto visible del shell, tal cual se pinta (para `F2`)
+/// texto del shell con historial (para `F2`): 64 KB de salida, mucho más
+/// que la cola que se pinta, así la captura incluye lo que ya pasó
 pub(crate) fn shell_texto(app: &App) -> String {
-    let (lines, _) = shell_lineas(app);
+    let (lines, _) = shell_lineas(app, 65536, 6000);
     let mut out: Vec<String> = lines
         .iter()
         .map(|l| l.iter().map(|c| c.0).collect::<String>().trim_end().to_string())

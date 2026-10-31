@@ -63,10 +63,13 @@ independiente de `Ctrl+E` (que envía al shell):
   texto va al anillo).
 - **Registros**: `"ay` guarda en el registro `a`, `"ap` lo pega; `"0p`,
   `"1p`… eligen ranuras del anillo (0 = lo más reciente).
-- **`F2` captura la ventana visible** (editor, shell o programa) a un
-  fichero temporal y la abre en el editor como solo lectura: allí se
-  selecciona y se copia con `y`. Con tmux usa `tmux capture-pane`, así que
-  incluye el **scrollback**. `Ctrl+J` vuelve a lo que había.
+- El popup de `Ctrl+Y` lista también los **registros con nombre**, y en
+  `INSERT` pega en el cursor sin salir a NORMAL.
+- **`F2` captura la ventana** (editor, shell o programa) a un fichero
+  temporal y la abre en el editor como solo lectura: allí se selecciona y
+  se copia con `y`. Incluye el **scrollback** (shell: 64 KB de salida;
+  programas: 2 000 filas del emulador; con tmux: `capture-pane`).
+  `Ctrl+J` vuelve a lo que había.
 - Al copiar se emite **OSC 52** (best-effort): inofensivo en una tty real,
   y en tmux/xterm con integración copia también al portapapeles del sistema.
 

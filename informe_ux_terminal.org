@@ -191,7 +191,10 @@ shell o un programa era imposible; `Ctrl+E` sólo envía al shell.
 - `Term` gana **scrollback** (2000 filas de la pantalla principal) para la
   captura de programas.
 
-10 checks nuevos en `smoke_fase1.py` (sesión 6 «portapapeles»).
+El popup lista también los **registros con nombre** y **pega en INSERT** en
+el cursor (sin salir a NORMAL). El **shell** se captura con 64 KB de salida
+(la pantalla sólo pinta los últimos 8 KB), así que `F2` incluye lo que ya
+pasó. 16 checks nuevos en `smoke_fase1.py` (sesiones 6 «portapapeles» y 7).
 
 * 2. Entregado en esta fase: menú de programas (fase 2)
 

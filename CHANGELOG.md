@@ -15,7 +15,10 @@ Todas las versiones notables de **pigmacs**. El formato sigue
 - **`F2` captura la ventana visible** (editor, shell o programa) a un
   fichero temporal en solo lectura; con tmux usa `capture-pane` (scrollback).
 - **OSC 52 best-effort** al copiar y **scrollback** de 2000 filas en `Term`.
-- 10 checks nuevos en `tests/smoke_fase1.py` (sesión 6 «portapapeles»).
+- El popup de `Ctrl+Y` lista los registros con nombre y **pega en INSERT**.
+- **Scrollback del shell** en la captura: 64 KB de salida (la pantalla pinta
+  sólo la cola de 8 KB).
+- 16 checks nuevos en `tests/smoke_fase1.py` (sesiones 6 y 7).
 - **Which-key**: al pulsar un prefijo (`z`, `g`, `d`, `m`, `'`) la barra
   inferior muestra las continuaciones posibles (`plegado · a alternar ·
   c cerrar · o abrir · …`).
