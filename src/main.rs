@@ -1,7 +1,7 @@
 // ————— pigmacs · declaraciones mod · prelude · main() · run() · atajos globales —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    4.0.0
+// Versión:    4.1.0
 // Fecha:      2026-10-31
 mod ai;
 mod app;

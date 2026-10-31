@@ -2,7 +2,7 @@
 # ————— pigmacs · tests · parte A: limpieza al arrancar y Delete/Ctrl+U —————
 # Autor:      kidandromeda
 # Licencia:   MIT
-# Versión:    4.0.0
+# Versión:    4.1.0
 # Fecha:      2026-10-31
 """Parte A: limpieza al arrancar + fantasmas del Delete/Ctrl+U en el shell.
 

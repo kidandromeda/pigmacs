@@ -1,7 +1,7 @@
 // ————— pigmacs · portapapeles (anillo de muertes) —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    4.0.0
+// Versión:    4.1.0
 // Fecha:      2026-10-31
 //
 // Portapapeles propio, independiente de `Ctrl+E` (que envía al shell):

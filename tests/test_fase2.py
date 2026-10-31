@@ -2,7 +2,7 @@
 # ————— pigmacs · tests · fase 2: menú Ctrl+P y programa integrado —————
 # Autor:      kidandromeda
 # Licencia:   MIT
-# Versión:    4.0.0
+# Versión:    4.1.0
 # Fecha:      2026-10-31
 """Fase 2: menú Ctrl+P · programa en la ventana principal · Ctrl+G lo cierra ·
 lanzador de aplicaciones gráficas Ctrl+X."""

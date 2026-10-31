@@ -4,7 +4,7 @@ Todas las versiones notables de **pigmacs**. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el proyecto usa
 [Versionado Semántico](https://semver.org/lang/es/).
 
-## [No publicado]
+## [4.1.0] — 2026-10-31
 
 ### Añadido
 
@@ -133,6 +133,7 @@ Primera release pública con binario: editor modal para `.org`, shell PTY
 integrado, panel de IA, navegador de ficheros, plegado de cabeceras y
 deshacer.
 
+[4.1.0]: https://github.com/kidandromeda/pigmacs/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/kidandromeda/pigmacs/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/kidandromeda/pigmacs/compare/v3.0.0...v3.1.0
 [3.0.1]: https://github.com/kidandromeda/pigmacs/compare/v3.0.0...v3.0.1

@@ -18,7 +18,7 @@ El programa es sólo un archivo ejecutable único. En un ordenador con un SO bá
 **Requisitos:** Linux x86-64
 
 ```bash
-curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v4.0.0/pigmacs -o pigmacs && chmod +x pigmacs
+curl -sL https://github.com/kidandromeda/pigmacs/releases/download/v4.1.0/pigmacs -o pigmacs && chmod +x pigmacs
 ./pigmacs
 ```
 
@@ -258,7 +258,7 @@ truecolor ni de entorno gráfico):
 
 - **barra de estado**: el modo en una píldora de color (NORMAL azul, INSERT
   verde, VISUAL magenta, SHELL cyan…), el punto rojo `●` si hay cambios sin
-  guardar, el aviso del programa, y a la derecha `pigmacs v4.0.0 │ fichero
+  guardar, el aviso del programa, y a la derecha `pigmacs v4.1.0 │ fichero
   │ fila:col` siempre visible
 - **barra de ayuda**: encima del status, los atajos del modo activo con las
   teclas en color y las descripciones en gris; la ayuda completa (`F1`/`?`)
@@ -281,11 +281,12 @@ truecolor ni de entorno gráfico):
 MIT — véase [LICENSE](LICENSE). Autor: **kidandromeda**.
 
 Todos los ficheros de `src/` y `tests/` llevan cabecera con autor, licencia,
-versión global (`4.0.0`) y fecha. La versión del proyecto vive en
+versión global (`4.1.0`) y fecha. La versión del proyecto vive en
 `Cargo.toml` y en los tags de git; los archivos no llevan versión propia.
 
 ## Historial y contribución
 
 - Cambios por versión: [CHANGELOG.md](CHANGELOG.md).
+- Ideas y hoja de ruta: [ideas_futuras.org](ideas_futuras.org).
 - Cómo compilar, probar y enviar cambios: [CONTRIBUTING.md](CONTRIBUTING.md)
   y la guía de referencia [AGENTS.md](AGENTS.md).

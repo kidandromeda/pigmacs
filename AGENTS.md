@@ -44,7 +44,7 @@ python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, 
 - **Regla de oro**: `cargo build` sin *warnings* + las 3 suites en verde
   **antes** de cada commit.
 
-## Estructura de `src/` (v4.0.0, ~6050 líneas)
+## Estructura de `src/` (v4.1.0, ~6680 líneas)
 
 | módulo | líneas | contenido |
 |---|---|---|
@@ -157,6 +157,10 @@ Reglas críticas que **no se deben romper**:
   propuestas»** con TODOs priorizados (A/B/C): la mejor fuente de tareas nuevas.
 - `tests/` — `ptylib.py` (harness PTY + emulador), `test_partA.py`,
   `smoke_fase1.py`, `test_fase2.py`.
+- `CHANGELOG.md` — historial por versión (Keep a Changelog).
+- `CONTRIBUTING.md` — cómo compilar, probar y enviar cambios.
+- `ideas_futuras.org` — hoja de ruta en org mode (TODO/DONE, prioridad A/B/C
+  y esfuerzo S/M/L): la fuente de tareas nuevas junto con el informe §3.
 
 ## Plan de fase 3 (rediseño visual «tty puro») — entregado en v3.1.0
 
@@ -217,7 +221,11 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
 
 ## Estado (última actualización: 2026-10-31)
 
-- **Portapapeles propio** (pendiente de release; sobre `main` tras v4.0.0):
+- **v4.1.0 publicada** (tag `v4.1.0`, release en GitHub con binario): las dos
+  entradas siguientes, juntas — descubrimiento sin manual y portapapeles
+  propio. Sin cambios de atajos globales (`Ctrl+Y` se suma al grupo TTY y
+  cede en el shell). 152/152 checks en verde.
+- **Portapapeles propio** (v4.1.0):
   `src/clipboard.rs` — **anillo de muertes** estilo emacs/vim (`y` en VISUAL,
   `yy`, `x`/`dd` cortan; `p`/`P` pegan; `Ctrl+Y` abre el historial en un
   popup), **registros con nombre** (`"ay`, `"ap`) y **ranuras** del anillo
@@ -229,8 +237,7 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   captura con 64 KB de salida (frente a los 8 KB que se pintan). El popup
   lista también los registros con nombre y **pega en INSERT** en el cursor.
   16 checks nuevos (sesiones 6 «portapapeles» y 7).
-- **Descubrimiento sin manual** (pendiente de release; sobre `main` tras
-  v4.0.0): **which-key** en la barra inferior al pulsar un prefijo (`z`, `g`,
+- **Descubrimiento sin manual** (v4.1.0): **which-key** en la barra inferior al pulsar un prefijo (`z`, `g`,
   `d`, `m`, `'`) con sus continuaciones · **sugerencia de tecla sin
   función** en NORMAL (`K` → «¿querías Ctrl+K?», con `i`/`/`/`F1` de
   recordatorio) · **ayuda buscable** (`F1` + `/`: filtra el manual por

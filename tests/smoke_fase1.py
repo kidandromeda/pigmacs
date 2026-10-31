@@ -2,7 +2,7 @@
 # ————— pigmacs · tests · smoke de regresión (fases 1 y A) —————
 # Autor:      kidandromeda
 # Licencia:   MIT
-# Versión:    4.0.0
+# Versión:    4.1.0
 # Fecha:      2026-10-31
 """Smoke de regresión (fase 1 + parte A): modos, editor, shell, tree, IA, ayuda."""
 import sys, time, os, subprocess

@@ -683,6 +683,11 @@ Estado: *126/126 en verde*.
   resaltado de sintaxis en bloques SRC, menú difuso, bell de la IA.
   *Nota:* se detectó y arregló un pánico por resta sin saturar en
   =draw_keybar= que rompía el smoke tras un resize (modo debug).
+- *v4.1.0 — descubrimiento y portapapeles propio*: publicada (tag y release
+  con binario). Which-key, sugerencias de tecla, ayuda buscable (`/`),
+  anillo de muertes (`y`/`yy`/`p`/`P`, `Ctrl+Y`), registros `"a`-`"z`,
+  captura de ventana con `F2` (+ scrollback del shell y de los programas) y
+  OSC 52. Ver §1.10 y §1.11. 152/152 checks en verde.
 - *v4.0.0 — rendimiento plano en ficheros grandes*: publicada (tag y release
   con binario). Caché de visibilidad de pliegues precalculada
   (=reconstruir_visibles()=), búsqueda cacheada, bisect de coincidencias y

@@ -1,0 +1,142 @@
+#+TITLE: pigmacs · ideas futuras
+#+AUTHOR: kidandromeda
+#+DATE: 2026-10-31
+#+STARTUP: overview
+#+OPTIONS: toc:2
+
+Hoja de ruta para seguir haciendo de pigmacs *el mejor amigo de quien
+trabaja en una consola de texto sin entorno gráfico*.
+
+* Cómo leer esto
+
+- Prioridad: =[#A]= lo siguiente que más se nota · =[#B]= importante ·
+  =[#C]= pulido.
+- Esfuerzo: *S* (una sesión) · *M* (varias) · *L* (grande).
+- =DONE= ya está en =main= (ver =CHANGELOG.md=).
+- Restricciones duras del proyecto: sólo *tty real* (sin ratón ni
+  truecolor), paleta de *16 colores ANSI*, glifos de la fuente VGA, sin
+  dependencias nuevas (hoy =anyhow=, =crossterm=, =portable-pty=).
+  Las herramientas externas (=pdftotext=, =chafa=, =rg=, =tmux=…) se usan
+  *sólo si están en el PATH*, como ya hace el menú =Ctrl+P=.
+
+* 1. Aprender sin ayuda (descubrimiento)
+
+El dolor principal del que entra sin manual: no sabe qué teclas existen y,
+cuando pulsa una sin función, *no pasa nada*.
+
+- DONE [#A] *Which-key*: la barra inferior muestra las continuaciones de un
+  prefijo (=z=, =g=, =d=, =m=, ='=).
+- DONE [#A] *Sugerencia de tecla sin función*: =K= → «¿querías Ctrl+K?».
+- DONE [#A] *Ayuda buscable*: =F1= + =/= filtra el manual por texto.
+- TODO [#A] *Onboarding de primer arranque* (M): tres pantallas con un
+  =.org= de práctica (mover, buscar, abrir el shell, volver) y «pulsa la
+  tecla que te digo». Sin GUI el primer minuto decide si lo usa.
+  Guardar un =~/.config/pigmacs/visto= para no repetirlo.
+- TODO [#A] *Command palette* =Ctrl+Shift+P= (M): todas las acciones con
+  descripción y atajo al lado; ejecutar sin memorizar y descubrir sin
+  manual. Se apoya en la misma barra que el which-key.
+- TODO [#B] *Consejo tras comando fallido* (M): al terminar un comando con
+  =exit ≠ 0=, aviso útil en la status («=htop: no encontrado= → =Ctrl+P= o
+  =sudo apt install htop=»). Requiere detectar el final del comando en el
+  shell (OSC 133 o marcar el prompt).
+- TODO [#C] *Ayuda contextual por panel* (S): =F1= sin argumentos muestra
+  primero la sección del panel activo; =F1= + =/= ya permite buscar.
+
+* 2. Tapar los agujeros de «no hay entorno gráfico»
+
+- DONE [#A] *Portapapeles propio* (M): anillo de muertes, registros
+  ="a=–="z=, =p=/=P=, =Ctrl+Y= y captura con =F2= (=src/clipboard.rs=).
+- TODO [#A] *Ver lo «imposible»* (M): desde el tree, previsualizar
+  *PDF* (=pdftotext -layout=), *imágenes* en ASCII (=chafa --format
+  symbols= o =img2txt=), =.docx=/.=zip= listando contenido. Es lo que más
+  se echa de menos al no haber visor.
+- TODO [#A] *Abrir la URL bajo el cursor* (S): detección en el editor y en
+  la salida del shell; =Enter= → =lynx=/=w3m= (ya están en el menú).
+- TODO [#A] *SSH sin fricción* (M): leer =~/.ssh/config= y ofrecer los hosts
+  en un popup difuso; «ping rápido» y estado de red en la status.
+- TODO [#B] *Logs del sistema* (M): visor de =journalctl= / =/var/log= con
+  filtros por unidad y nivel; saltar al error con =Enter=.
+- TODO [#B] *Menú contextual del tree* (S): tecla =m= → copiar ruta, abrir
+  con…, renombrar, borrar (con confirmación), =du= de la carpeta.
+- TODO [#C] *Descargas con progreso* (S): envolver =curl= mostrando tamaño,
+  velocidad y comprobación de espacio antes de empezar.
+
+* 3. Que no pierda trabajo (confianza)
+
+- TODO [#A] *Autoguardado + recuperación* (M): journal de cambios aparte y,
+  al reabrir tras una caída, ofrecer «recuperar lo no guardado» (estilo
+  =.swp= de vim). En una tty un cuelgue se lleva horas.
+- TODO [#A] *.bak al guardar + aviso claro de fallo* (S): disco lleno,
+  permisos, sólo lectura → causa y sugerencia, no «no se pudo guardar».
+- TODO [#B] *Sesión y restauración* (M): reabrir fichero, cursor, pliegues,
+  cwd y paneles (ya está en el informe §3).
+- TODO [#B] *Recientes* (S): lista de ficheros abiertos y «volver a la
+  última posición» por fichero.
+
+* 4. Para quien ya trabaja ahí (productividad)
+
+- TODO [#A] *Grep del proyecto* (M): =rg= (o =grep -rn=) en un panel con
+  resultados navegables; =Enter= salta al fichero y la línea.
+- TODO [#A] *Sustitución global con confirmación* (S): =:%s/viejo/nuevo/gc=
+  con resaltado y =s/n= por coincidencia.
+- TODO [#B] *Git mínimo integrado* (L): =status= y =diff= en panel, =commit=
+  con mensaje, rama en la barra de estado. Es lo que más se sale a otra
+  terminal a hacer.
+- TODO [#B] *Diff de dos ficheros / contra HEAD* (M): con colores del tema.
+- TODO [#B] *Jump list y macros* (S): =Ctrl+O=/=Ctrl+I= para volver atrás;
+  =q= + registro y =@= para repetir.
+- TODO [#B] *Buffers y pestañas* (M) · *mini-tmux* (M) · *jobs* (M) ·
+  *scratchpad* =Ctrl+Y= (¡ojo: ya lo usa el portapapeles! → =Ctrl+X= o
+  =Ctrl+Space=) · *org-babel* (L): ya priorizados en el informe §3.
+
+* 5. Robustez de consola real
+
+- TODO [#B] *Alto contraste / monocromo* (S): variante de =theme.rs= y aviso
+  si la terminal baja de 80×24 (mejor que dibujar mal).
+- TODO [#B] *Fallback ASCII y =TERM=dumb=* (M): si =LANG= no es UTF-8, usar
+  glifos de reserva; detectar terminal sin colores.
+- TODO [#A] *Fichero de configuración con remapeo* (M): en tty algunas
+  combinaciones no llegan (Alt, Ctrl+Shift); poder asignar alternativas es
+  la diferencia entre «no me funciona» y «lo uso».
+- TODO [#B] *Bracketed paste* y *rueda del ratón* (S/M): ya en el informe;
+  en tty pura no hay ratón, pero en tmux/xterm sí.
+
+* 6. Portapapeles: siguientes pasos
+
+Lo entregado está en =src/clipboard.rs= (v4.1.0). Pendiente:
+
+- TODO [#B] *Selección con =v= dentro de la captura* (ya funciona al abrir
+  el temporal) → *fusionarla con el buffer original*: marcar la captura
+  como histórico de solo lectura y poder volver con =Ctrl+J= sin perder el
+  fichero que se estaba editando (hoy =open_file= cambia de buffer).
+- TODO [#B] *Pegar registros con =Ctrl+Y= directamente en INSERT* (S):
+  tecla rápida (=Ctrl+Shift+V= si llega; si no, =Ctrl+Y= y =Enter=).
+- TODO [#B] *Scrollback navegable* (M): ver el historial del shell/programa
+  dentro de pigmacs (no sólo capturarlo); =Ctrl+U= ya mueve el borde.
+- TODO [#C] *Copiar desde el popup* (S): =y= en el popup copia la entrada
+  al registro seleccionado.
+- TODO [#C] *Portapapeles del sistema real en X* (S): si =DISPLAY= existe,
+  usar =xclip=/=wl-copy= además de OSC 52.
+
+* 7. Ideas menores y de la comunidad
+
+- TODO [#C] *Calculadora / convertidor en la status* (S).
+- TODO [#C] *Wiki-links y backlinks entre =.org=* (M).
+- TODO [#C] *Journal: historial de lo lanzado* (S).
+- TODO [#C] *Avisos de tareas org* (SCHEDULED/DEADLINE) (M).
+- TODO [#C] *Pantalla de arranque con info del sistema* (S).
+- TODO [#C] *Panel de red* (IP, puertos, estado) (S).
+
+* Lo que nunca se hará (líneas rojas)
+
+- Ventana a pantalla completa de apps gráficas: haría falta un gestor de
+  ventanas; X sin WM abre al tamaño que pide la app.
+- Popup de ayuda al mantener =Ctrl=: el kernel de la consola no entrega la
+  pulsación/suelta de un modificador solo (haría falta el protocolo kitty).
+- 256 colores / truecolor / emojis / powerline: no existen en la fuente VGA
+  de la consola.
+- Dependencias nuevas sin pedirlo expresamente.
+
+# Local variables:
+# org-todo-keywords: ((sequence "TODO" "DONE"))
+# End:

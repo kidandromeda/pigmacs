@@ -13,11 +13,11 @@ agentes.
    ```bash
    cd tests
    python3 test_partA.py      #  6 checks
-   python3 smoke_fase1.py     # 84 checks
+   python3 smoke_fase1.py     # 90 checks
    python3 test_fase2.py      # 56 checks
    ```
 
-   Deben dar **0 fallos** (146/146). Para probar otro binario:
+   Deben dar **0 fallos** (152/152). Para probar otro binario:
    `PIGMACS_BIN=/ruta/binario python3 test_*.py`.
 3. **Actualiza la documentación** si cambias atajos o interfaz:
    `HELP_TEXT` (`src/ui.rs`), `README.md` y `informe_ux_terminal.org`.
