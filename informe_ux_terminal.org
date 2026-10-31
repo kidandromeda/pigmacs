@@ -166,6 +166,33 @@ pero era un muro de texto que había que recorrer a mano.
 mientras la ayuda está abierta. 10 checks nuevos en `smoke_fase1.py`
 (sesión 5 «descubrimiento»).
 
+** 1.11 Portapapeles propio: anillo de muertes y captura de ventana (nuevo)
+
+*Síntoma:* sin entorno gráfico no hay portapapeles del sistema (`xclip`
+necesita X y en una tty no existe), así que copiar texto entre el editor, el
+shell o un programa era imposible; `Ctrl+E` sólo envía al shell.
+
+*Arreglo* (`src/clipboard.rs`):
+
+- **Anillo de muertes** estilo emacs/vim: cada copia o corte apila texto
+  (`y` en VISUAL, `yy`, `x`/`dd` cortan). `p`/`P` pegan el último y
+  `Ctrl+Y` abre un popup con el historial (j/k + Enter); en el shell
+  `Ctrl+Y` cede a readline.
+- **Registros**: `"ay` guarda en el registro con nombre `a` y `"ap` lo pega;
+  `"0p`, `"1p`… eligen ranuras del anillo (0 = lo más reciente).
+- **`F2` captura la ventana visible** (editor, shell o programa) a un
+  fichero temporal y lo abre en el editor como solo lectura: allí se
+  selecciona y se copia con `y`. Con tmux usa `tmux capture-pane -p -S -2000`
+  (incluye el scrollback); sin tmux, el texto que se pinta. `Ctrl+J` vuelve.
+  Esta es la respuesta al problema de «seleccionar dentro de un programa»:
+  no se pelea con su modo copia, se captura lo que se ve.
+- **OSC 52 best-effort** al copiar: inofensivo en tty real; en tmux/xterm con
+  integración copia también al portapapeles del sistema.
+- `Term` gana **scrollback** (2000 filas de la pantalla principal) para la
+  captura de programas.
+
+10 checks nuevos en `smoke_fase1.py` (sesión 6 «portapapeles»).
+
 * 2. Entregado en esta fase: menú de programas (fase 2)
 
 ** 2.1 Qué hace

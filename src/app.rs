@@ -120,6 +120,13 @@ pub(crate) struct App {
     pub(crate) help_scroll: usize,
     pub(crate) help_query: String,
     pub(crate) help_filtro: bool,
+    // portapapeles: anillo de muertes (kill ring) y registros con nombre
+    pub(crate) anillo: Vec<String>,
+    pub(crate) nombrados: HashMap<char, String>,
+    pub(crate) registro: Option<char>,
+    pub(crate) anillo_open: bool,
+    pub(crate) anillo_cursor: usize,
+    pub(crate) osc52: Option<String>, // copia best-effort al portapapeles del sistema
     // programas lanzados desde el menú (Ctrl+P)
     pub(crate) program: Option<Program>,
     pub(crate) menu_open: bool,

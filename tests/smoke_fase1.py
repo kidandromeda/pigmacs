@@ -353,5 +353,70 @@ s5.send("\x1bq", 0.7)
 check("descubrir: Alt+Q sale", s5.wait_exit(4))
 s5.close()
 
+# ——— sesión 6: portapapeles (anillo de muertes y captura F2) ———
+s6 = Session(files={"clip.org": "uno\ndos\ntres\n"})
+s6.read(1.3)
+s6.send("v", 0.2)
+s6.send("l", 0.15)
+s6.send("l", 0.15)                      # visual: selecciona "uno"
+s6.send("y", 0.4)                       # y: copia al anillo
+s6.read(0.5)
+check("clip: y copia la selección", "Copiado al anillo (3 car.)" in s6.scr.text(),
+      s6.scr.text()[-160:])
+s6.send("G", 0.3)                       # última línea
+s6.send("p", 0.4)                       # pega tras el cursor
+s6.read(0.5)
+check("clip: p pega la selección", "tunores" in s6.scr.text())
+s6.send("u", 0.4)                       # deshacer el pegado
+s6.read(0.4)
+# yy + p: la línea entera se pega como línea nueva
+s6.send("g", 0.15)
+s6.send("g", 0.3)                       # primera línea ("uno")
+s6.send("y", 0.15)
+s6.send("y", 0.35)                      # yy
+s6.send("G", 0.25)
+s6.send("p", 0.35)
+s6.read(0.5)
+t = s6.scr.text()
+check("clip: yy + p pega una línea", t.count("uno") >= 2, t[:200])
+# dd corta la línea (también va al anillo) y p la recupera
+s6.send("d", 0.15)
+s6.send("d", 0.35)
+s6.read(0.5)
+check("clip: dd corta la línea", "Línea cortada" in s6.scr.text(), s6.scr.text()[-160:])
+s6.send("p", 0.4)
+s6.read(0.5)
+check("clip: p recupera la línea cortada", "uno" in s6.scr.text())
+# registro con nombre: "ayy copia, "ap pega
+s6.send("g", 0.15)
+s6.send("g", 0.3)
+s6.send('"', 0.25)
+s6.send("a", 0.25)
+s6.send("y", 0.15)
+s6.send("y", 0.35)
+s6.read(0.5)
+check("clip: registro «a»", "Copiado al registro «a»" in s6.scr.text(),
+      s6.scr.text()[-160:])
+# Ctrl+Y: popup del anillo; Enter pega
+s6.send("\x19", 0.5)
+s6.read(0.5)
+check("clip: Ctrl+Y abre el anillo", "portapapeles · anillo" in s6.scr.text(),
+      s6.scr.text()[-200:])
+s6.send("\r", 0.4)
+s6.read(0.5)
+check("clip: Enter pega del anillo", "uno" in s6.scr.text())
+# F2 desde el shell: captura lo que se ve en el editor
+s6.send("\x14", 0.5)                   # Ctrl+T -> shell
+s6.send("echo HOLA-MUNDO\r", 0.9)
+s6.send("\x1bOQ", 0.8)                 # F2
+s6.read(0.8)
+t = s6.scr.text()
+check("clip: F2 captura el shell",
+      "Captura de shell" in t and "HOLA-MUNDO" in t and "pigmacs-captura" in t,
+      t[-280:])
+s6.send("\x1bq", 0.7)
+check("clip: Alt+Q sale", s6.wait_exit(4))
+s6.close()
+
 print("\n%d fallos" % len(fails))
 sys.exit(1 if fails else 0)

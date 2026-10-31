@@ -8,6 +8,14 @@ Todas las versiones notables de **pigmacs**. El formato sigue
 
 ### Añadido
 
+- **Portapapeles propio** (`src/clipboard.rs`), independiente de `Ctrl+E`:
+  anillo de muertes (`y` en VISUAL, `yy`, `x`/`dd` cortan, `p`/`P` pegan),
+  popup del historial con `Ctrl+Y`, registros con nombre (`"ay`/`"ap`) y
+  ranuras del anillo (`"0p`…).
+- **`F2` captura la ventana visible** (editor, shell o programa) a un
+  fichero temporal en solo lectura; con tmux usa `capture-pane` (scrollback).
+- **OSC 52 best-effort** al copiar y **scrollback** de 2000 filas en `Term`.
+- 10 checks nuevos en `tests/smoke_fase1.py` (sesión 6 «portapapeles»).
 - **Which-key**: al pulsar un prefijo (`z`, `g`, `d`, `m`, `'`) la barra
   inferior muestra las continuaciones posibles (`plegado · a alternar ·
   c cerrar · o abrir · …`).

@@ -29,10 +29,10 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (136 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (146 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 74 checks — smoke de fases anteriores (sesiones 4-5: plegues y descubrimiento)
+python3 smoke_fase1.py     # 84 checks — smoke de fases anteriores (sesiones 4-6: plegues, descubrimiento y portapapeles)
 python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, Ctrl+X…
 ```
 
@@ -59,6 +59,7 @@ python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, 
 | `editor.rs` | 467 | panel del editor: `handle_editor_key`, `handle_search_key`, `compute_matches`, `org_line_style`, `draw_editor_lines` + **resaltado de sintaxis** de bloques SRC (`src_styles`, `lang_of`, `src_state_at`) |
 | `browser.rs` | 186 | tree de ficheros: `Browser` (`refresh`, `cd` **arrastra el cwd del proceso**, `cursor_up/down`…), `handle_browser_key`, `draw_browser`, `browser_width` |
 | `ai.rs` | 130 | panel de IA: `handle_ai_key`, `draw_ai_pane` |
+| `clipboard.rs` | 330 | **portapapeles**: anillo de muertes (`matar`/`yank`/`pegar`), registros `"a`-`"z` y `"0`-`"9`, popup `Ctrl+Y`, captura `F2` (editor/shell/programa, `tmux capture-pane`) y OSC 52 |
 | `theme.rs` | 110 | **paleta semántica única** (16 colores ANSI): `ACCENT/FG/DIM/SYNTAX_*` + helpers `fg()`, `bold()`, `pill()`, `band()`. Todo el pintado pasa por aquí |
 
 Notas del split (v2.0.0): se partió un `main.rs` de 4016 líneas. Toda la
@@ -209,13 +210,23 @@ que pigmacs sea *bonita*, con la elegancia que se puede lograr en una
    tecleado tal cual si no hay coincidencia. Ver §3 del informe.
    (+ bell y banda de estado de la IA, §3 #C.)
 
-**Definición de hecho:** `cargo build` 0 warnings + 136/136 checks en verde
+**Definición de hecho:** `cargo build` 0 warnings + 146/146 checks en verde
 antes de commit; la comprobación **en una consola VT real** (no en xterm)
 está pendiente de que la haga el usuario (el agente no tiene acceso a
 `/dev/ttyN`). `HELP_TEXT`, README e informe se actualizaron en v3.1.0.
 
 ## Estado (última actualización: 2026-10-31)
 
+- **Portapapeles propio** (pendiente de release; sobre `main` tras v4.0.0):
+  `src/clipboard.rs` — **anillo de muertes** estilo emacs/vim (`y` en VISUAL,
+  `yy`, `x`/`dd` cortan; `p`/`P` pegan; `Ctrl+Y` abre el historial en un
+  popup), **registros con nombre** (`"ay`, `"ap`) y **ranuras** del anillo
+  (`"0p`…), **`F2` captura la ventana visible** (editor, shell o programa;
+  con tmux `capture-pane` incluye scrollback) a un fichero temporal en
+  solo lectura para poder seleccionar y copiar, y **OSC 52 best-effort** al
+  copiar. `Ctrl+E` sigue siendo enviar al shell. `Term` guarda además un
+  **scrollback** de 2000 filas de la pantalla principal. 10 checks nuevos
+  (sesión 6 «portapapeles»).
 - **Descubrimiento sin manual** (pendiente de release; sobre `main` tras
   v4.0.0): **which-key** en la barra inferior al pulsar un prefijo (`z`, `g`,
   `d`, `m`, `'`) con sus continuaciones · **sugerencia de tecla sin
@@ -226,7 +237,7 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   la ayuda. 10 checks nuevos (sesión 5 «descubrimiento»).
 - **v4.0.0 publicada** (tag `v4.0.0`, release en GitHub con binario): va
   dedicada al fix de rendimiento de abajo — deja el movimiento *plano* en
-  ficheros `.org` grandes. Sin cambios de atajos; 136/136 checks
+  ficheros `.org` grandes. Sin cambios de atajos; 146/146 checks
   en verde.
 - **Rendimiento O(n²) → plano en ficheros grandes** (el usuario reportó
   latencias de ~10 s por pulsación en `.org` grandes, peor cuanto más cerca
@@ -311,4 +322,4 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   (incluido el shell), `MENU` con argv (neovim→nvim, lynx/w3m con
   www.duckduckgo.com) y 15 programas (con mc como «Midnight Commander»).
 - Tag `v2.0.0` + commit `52facf6` **sólo locales**: git sólo local, sin push.
-- 136/136 checks en verde, 0 warnings.
+- 146/146 checks en verde, 0 warnings.

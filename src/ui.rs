@@ -9,6 +9,7 @@ use crate::{
     browser::{browser_width, draw_browser},
     editor::{compute_matches, draw_editor_lines, org_line_style},
     frame::{render_frame, Frame, Style},
+    clipboard::draw_anillo,
     launcher::draw_launcher,
     program::draw_menu,
     shell::draw_shell_output,
@@ -176,6 +177,21 @@ GENERAL
   Ctrl+F / Ctrl+T     tree de ficheros / terminal (T: ir y salir)
   Ctrl+P / Ctrl+G     menú de programas / cerrar programa en marcha
   Ctrl+X              lanzador de aplicaciones gráficas (startx)
+
+PORTAPAPELES (ANILLO DE MUERTES)
+  en VISUAL, y         copiar la selección al anillo
+  y y                  copiar la línea entera
+  x / dd               cortar: el texto va también al anillo
+  p / P                pegar después / antes del cursor
+  " + letra            registro con nombre (a-z): "ay copia, "ap pega
+  " + dígito           ranura del anillo (0 = lo más reciente): "0p
+  Ctrl+Y               historial del anillo: j/k elige, Enter pega
+  F2                   captura la ventana visible (editor, shell o programa)
+                       y la abre aquí como solo lectura; en tmux usa
+                       capture-pane, así que incluye el scrollback
+  Ctrl+E               sigue siendo enviar al shell, NO el portapapeles
+  al copiar se emite OSC 52 (en tty real no hace nada; en tmux/xterm con
+  integración copia también al portapapeles del sistema)
 
 DESCUBRIR SIN MANUAL
   /                   buscar dentro de esta ayuda (Esc limpia el filtro;
@@ -412,6 +428,11 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
     // menú de programas: siempre encima del área principal
     if app.menu_open {
         draw_menu(app, bx, area_w, editor_rows, &mut fr);
+    }
+
+    // portapapeles (Ctrl+Y): el mismo estilo de popup
+    if app.anillo_open {
+        draw_anillo(app, bx, area_w, editor_rows, &mut fr);
     }
 
     // lanzador de aplicaciones gráficas: el mismo popup, encima de todo

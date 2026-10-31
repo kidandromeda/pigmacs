@@ -6,6 +6,7 @@
 mod ai;
 mod app;
 mod browser;
+mod clipboard;
 mod editor;
 mod frame;
 mod launcher;
@@ -18,6 +19,7 @@ mod ui;
 use ai::*;
 use app::*;
 use browser::*;
+use clipboard::*;
 use editor::*;
 use frame::*;
 use launcher::*;
@@ -193,6 +195,12 @@ pub(crate) fn main() -> Result<()> {
         help_scroll: 0,
         help_query: String::new(),
         help_filtro: false,
+        anillo: Vec::new(),
+        nombrados: HashMap::new(),
+        registro: None,
+        anillo_open: false,
+        anillo_cursor: 0,
+        osc52: None,
         program: None,
         menu_open: false,
         menu_cursor: 0,
@@ -345,6 +353,13 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
         };
         if app.redraw || shell_len != last_shell_len || ai_len != last_ai_len {
             draw(app)?;
+            // OSC 52 best-effort: en tty real no hace nada; en tmux/xterm con
+            // integración copia también al portapapeles del sistema
+            if let Some(t) = app.osc52.take() {
+                let mut out = io::stdout();
+                let _ = out.write_all(osc52(&t).as_bytes());
+                let _ = out.flush();
+            }
             last_shell_len = shell_len;
             last_ai_len = ai_len;
             app.redraw = false;
@@ -368,6 +383,11 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                 // ventana de ayuda: captura todas las teclas
                 if app.help_open {
                     handle_help_key(app, k);
+                    continue;
+                }
+                // popup del portapapeles (Ctrl+Y): captura todas las teclas
+                if app.anillo_open {
+                    handle_anillo_key(app, k);
                     continue;
                 }
                 // menú de programas (Ctrl+P): captura todas las teclas
@@ -448,6 +468,10 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                         app.abrir_ayuda();
                         continue;
                     }
+                    if k.code == KeyCode::F(2) {
+                        capturar_ventana(app);
+                        continue;
+                    }
                     if let Some(sc) = shortcut_of(k) {
                         match sc {
                             Shortcut::Quit
@@ -497,6 +521,11 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                 // F1: ayuda desde cualquier panel, el shell incluido
                 if k.code == KeyCode::F(1) {
                     app.abrir_ayuda();
+                    continue;
+                }
+                // F2: captura la ventana visible al editor (portapapeles)
+                if k.code == KeyCode::F(2) {
+                    capturar_ventana(app);
                     continue;
                 }
                 // Ctrl+Tab lo traga la terminal; Shift+Tab (CSI Z, KeyCode::BackTab) llega siempre
@@ -574,6 +603,7 @@ pub(crate) enum Shortcut {
     Launcher,     // Ctrl/Alt+X: lanzador de aplicaciones gráficas (.desktop)
     CloseProgram, // Ctrl/Alt+G: cerrar el programa en marcha
     ToEditor,     // Ctrl+J: volver al editor (escape seguro en tty reales)
+    Anillo,       // Ctrl+Y: historial del portapapeles (anillo de muertes)
 }
 
 /// resuelve un atajo de cualquiera de los dos grupos (Ctrl+letra o Alt+letra)
@@ -598,6 +628,7 @@ pub(crate) fn shortcut_of(k: KeyEvent) -> Option<Shortcut> {
         'n' => Shortcut::NewAi,
         'u' => Shortcut::BorderUp,
         'd' => Shortcut::BorderDown,
+        'y' => Shortcut::Anillo,
         'p' => Shortcut::Menu,
         'x' => Shortcut::Launcher,
         'g' => Shortcut::CloseProgram,
@@ -710,6 +741,16 @@ pub(crate) fn shortcut(app: &mut App, s: Shortcut) -> Result<Option<bool>> {
         // el lanzador de apps gráficas cede igual que el menú en el shell
         Shortcut::Launcher if in_shell => return Ok(None),
         Shortcut::Launcher => open_launcher(app),
+        // Ctrl+Y cede en el shell: readline lo usa para pegar (yank)
+        Shortcut::Anillo if in_shell => return Ok(None),
+        Shortcut::Anillo => {
+            if app.anillo.is_empty() {
+                app.status = "El anillo está vacío · y copia · dd corta".into();
+            } else {
+                app.anillo_open = true;
+                app.anillo_cursor = app.anillo.len() - 1;
+            }
+        }
         Shortcut::CloseProgram if in_shell => return Ok(None),
         Shortcut::CloseProgram => {
             if app.program.is_some() {

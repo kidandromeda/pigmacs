@@ -52,6 +52,24 @@ Pensado para consola de texto, donde no hay pistas visuales:
   (`/guardar` deja sólo lo relacionado con guardar), `j/k` navega, `Esc`
   limpia el filtro y una segunda vez cierra la ayuda.
 
+## Portapapeles (sin entorno gráfico)
+
+Sin X no hay portapapeles del sistema, así que pigmacs lleva el suyo,
+independiente de `Ctrl+E` (que envía al shell):
+
+- **Anillo de muertes** estilo emacs/vim: cada copia o corte apila texto;
+  `p`/`P` pegan el último y `Ctrl+Y` abre el historial para elegir.
+- `v` + `y` copia la selección; `yy` la línea entera; `x`/`dd` cortan (y el
+  texto va al anillo).
+- **Registros**: `"ay` guarda en el registro `a`, `"ap` lo pega; `"0p`,
+  `"1p`… eligen ranuras del anillo (0 = lo más reciente).
+- **`F2` captura la ventana visible** (editor, shell o programa) a un
+  fichero temporal y la abre en el editor como solo lectura: allí se
+  selecciona y se copia con `y`. Con tmux usa `tmux capture-pane`, así que
+  incluye el **scrollback**. `Ctrl+J` vuelve a lo que había.
+- Al copiar se emite **OSC 52** (best-effort): inofensivo en una tty real,
+  y en tmux/xterm con integración copia también al portapapeles del sistema.
+
 ## Modos
 
 **Normal** — movimiento y comandos:

@@ -34,15 +34,20 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 );
             let mark_seq = matches!(app.pending, Some('m') | Some('\''))
                 && matches!(k.code, KeyCode::Char(c) if c.is_ascii_lowercase());
+            let reg_seq = app.pending == Some('"')
+                && matches!(k.code, KeyCode::Char(c) if c.is_ascii_alphanumeric());
             let repeatable = matches!(
                 k.code,
                 KeyCode::Char('g')
                     | KeyCode::Char('d')
                     | KeyCode::Char('z')
                     | KeyCode::Char('m')
+                    | KeyCode::Char('y')
+                    | KeyCode::Char('"')
                     | KeyCode::Char('\'')
             ) || fold_seq
-                || mark_seq;
+                || mark_seq
+                || reg_seq;
             if !repeatable {
                 app.pending = None;
             }
@@ -53,6 +58,17 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 app.count = None;
             }
             match k.code {
+                // portapapeles: " seguido de letra (registro con nombre) o de
+                // dígito (ranura del anillo; 0 = lo más reciente)
+                KeyCode::Char(c) if app.pending == Some('"') && c.is_ascii_alphanumeric() => {
+                    app.registro = Some(c.to_ascii_lowercase());
+                    app.pending = None;
+                    app.status = if c.is_ascii_digit() {
+                        format!("Anillo: ranura «{c}» · y copiar · p pegar")
+                    } else {
+                        format!("Registro «{c}» · y copiar · p pegar")
+                    };
+                }
                 // marcas de vim: m<x> fija la posición · '<x> salta a ella
                 KeyCode::Char(c) if app.pending == Some('m') && c.is_ascii_lowercase() => {
                     app.marks.insert(c, (app.row, app.col));
@@ -158,14 +174,39 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.ensure_visible();
                 }
                 KeyCode::Char('z') => app.pending = Some('z'),
+                // "a: elegir registro con nombre · "0: ranura del anillo
+                KeyCode::Char('"') => {
+                    app.pending = Some('"');
+                    app.status = "Registro: pulsa una letra (a-z) o un dígito del anillo".into();
+                }
                 KeyCode::Char('m') => app.pending = Some('m'),
                 KeyCode::Char('\'') => app.pending = Some('\''),
-                KeyCode::Char('d') if app.pending == Some('d') => {
-                    app.delete_line();
+                KeyCode::Char('y') if app.pending == Some('y') => {
+                    // yy: copia la línea entera (con \n final = pegada como línea)
+                    let texto = format!("{}\n", app.lines[app.row].clone());
+                    app.yank(texto);
                     app.pending = None;
                 }
+                KeyCode::Char('y') => app.pending = Some('y'),
+                KeyCode::Char('p') => app.pegar(false),
+                KeyCode::Char('P') => app.pegar(true),
+                KeyCode::Char('d') if app.pending == Some('d') => {
+                    // dd corta: la línea va también al anillo
+                    let texto = format!("{}\n", app.lines[app.row].clone());
+                    app.matar(texto);
+                    app.delete_line();
+                    app.pending = None;
+                    app.status = "Línea cortada · p pegar".into();
+                }
                 KeyCode::Char('d') => app.pending = Some('d'),
-                KeyCode::Char('x') => app.delete_char_at_cursor(),
+                KeyCode::Char('x') => {
+                    if let Some(l) = app.lines.get(app.row) {
+                        if let Some(c) = l.chars().nth(app.col) {
+                            app.matar(c.to_string());
+                        }
+                    }
+                    app.delete_char_at_cursor();
+                }
                 KeyCode::Char('u') => app.undo_edit(),
                 KeyCode::Char('i') => app.mode = Mode::Insert,
                 KeyCode::Char('a') => {
@@ -273,7 +314,20 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                 app.col = app.line_len().saturating_sub(1);
                 app.ensure_visible();
             }
-            KeyCode::Char('x') | KeyCode::Delete => app.delete_selection(),
+            KeyCode::Char('y') => {
+                if let Some(t) = app.seleccion_texto() {
+                    app.yank(t);
+                }
+                app.mode = Mode::Normal;
+                app.anchor = None;
+            }
+            KeyCode::Char('x') | KeyCode::Delete => {
+                if let Some(t) = app.seleccion_texto() {
+                    app.matar(t);
+                }
+                app.delete_selection();
+                app.status = "Selección cortada · p pegar".into();
+            }
             _ => {}
         },
         Mode::Shell | Mode::Ai | Mode::Browser | Mode::Program => {}

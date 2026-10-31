@@ -42,6 +42,8 @@ pub(crate) struct Term {
     pub(crate) buf: Vec<u8>,     // bytes recibidos aún sin procesar (secuencia a medias)
     pub(crate) state: PState,
     pub(crate) csi: String,
+    // historial: filas que salieron por arriba de la pantalla principal (F2)
+    pub(crate) scrollback: Vec<Vec<Cell>>,
 }
 
 impl Term {
@@ -66,6 +68,7 @@ impl Term {
             buf: Vec::new(),
             state: PState::Normal,
             csi: String::new(),
+            scrollback: Vec::new(),
         }
     }
 
@@ -268,7 +271,14 @@ impl Term {
     pub(crate) fn scroll_up(&mut self, n: usize) {
         let region = (self.bot - self.top + 1).min(self.h as usize);
         for _ in 0..n.min(region) {
-            self.grid.remove(self.top);
+            let fila = self.grid.remove(self.top);
+            // historial: sólo la pantalla principal desplazándose desde arriba
+            if self.top == 0 && self.alt.is_none() {
+                self.scrollback.push(fila);
+                if self.scrollback.len() > 2000 {
+                    self.scrollback.remove(0);
+                }
+            }
             self.grid
                 .insert(self.bot, vec![Cell::default(); self.w as usize]);
         }
@@ -680,4 +690,28 @@ pub(crate) fn parse_sgr(params: &str, mut st: Style) -> Style {
         k += 1;
     }
     st
+}
+
+impl Term {
+    /// texto de una fila de celdas, sin espacios sobrantes al final
+    fn fila_texto(fila: &[Cell]) -> String {
+        fila.iter().map(|c| c.ch).collect::<String>().trim_end().to_string()
+    }
+
+    /// historial + pantalla visible, para capturar también el scrollback
+    pub(crate) fn texto_completo(&self) -> String {
+        let mut out: Vec<String> = self
+            .scrollback
+            .iter()
+            .map(|f| Self::fila_texto(f))
+            .collect();
+        out.extend(self.grid.iter().map(|f| Self::fila_texto(f)));
+        while out.last().map(|s| s.is_empty()).unwrap_or(false) {
+            out.pop();
+        }
+        while out.first().map(|s| s.is_empty()).unwrap_or(false) {
+            out.remove(0);
+        }
+        out.join("\n")
+    }
 }
