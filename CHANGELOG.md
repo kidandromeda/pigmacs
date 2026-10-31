@@ -4,6 +4,24 @@ Todas las versiones notables de **pigmacs**. El formato sigue
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y el proyecto usa
 [Versionado Semántico](https://semver.org/lang/es/).
 
+## [No publicado]
+
+### Añadido
+
+- **Which-key**: al pulsar un prefijo (`z`, `g`, `d`, `m`, `'`) la barra
+  inferior muestra las continuaciones posibles (`plegado · a alternar ·
+  c cerrar · o abrir · …`).
+- **Sugerencia de tecla sin función** en NORMAL: «`K`» no hace nada aquí ·
+  ¿querías `Ctrl+K`? · `F1` ayuda.
+- **Ayuda buscable** (`F1` + `/`): filtra el manual por texto, con barra de
+  consulta y recuento; `Esc` limpia el filtro y otra vez cierra.
+- 10 checks nuevos en `tests/smoke_fase1.py` (sesión 5 «descubrimiento»).
+
+### Arreglado
+
+- El cursor del editor se pintaba encima de la ayuda, tapando texto del
+  manual.
+
 ## [4.0.0] — 2026-10-31
 
 Movimiento **plano** en ficheros `.org` grandes: se acaba con la latencia

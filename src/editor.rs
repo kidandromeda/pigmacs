@@ -208,8 +208,7 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.pending = None;
                 }
                 KeyCode::Char('?') => {
-                    app.help_open = true;
-                    app.help_scroll = 0;
+                    app.abrir_ayuda();
                     app.pending = None;
                 }
                 KeyCode::Char('v') => {
@@ -217,7 +216,12 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     app.anchor = Some((app.row, app.col));
                     app.pending = None;
                 }
-                _ => {}
+                // Esc cancela una secuencia a medias sin más ruido
+                KeyCode::Esc => {}
+                // tecla sin función: sin entorno gráfico no hay pistas y
+                // "no pasa nada" parece un fallo · se sugiere el atajo
+                // homónimo (Ctrl+<letra>) y la ayuda
+                otro => avisar_tecla_sin_funcion(app, &otro),
             }
         }
         Mode::Insert => match k.code {
@@ -793,4 +797,32 @@ pub(crate) fn is_selected(app: &App, row: usize, col: usize) -> bool {
         return col <= c2;
     }
     true
+}
+
+/// Teclas globales del proyecto (Ctrl+letra). Se usan para sugerir el atajo
+/// cuando el usuario pulsa la letra suelta en modo NORMAL y no pasa nada.
+fn atajo_global(c: char) -> bool {
+    matches!(
+        c.to_ascii_lowercase(),
+        'q' | 's' | 'p' | 'x' | 'g' | 't' | 'v' | 'f' | 'a' | 'n' | 'e' | 'r' | 'k' | 'u' | 'd' | 'j'
+    )
+}
+
+/// Aviso para una tecla sin función en NORMAL. En una tty sin entorno
+/// gráfico no hay pistas visuales: si no pasa nada, parece un fallo. Se
+/// sugiere el atajo global homónimo (`K` → `Ctrl+K`) y las teclas básicas.
+fn avisar_tecla_sin_funcion(app: &mut App, code: &KeyCode) {
+    if let KeyCode::Char(c) = *code {
+        if c.is_ascii_alphabetic() && atajo_global(c) {
+            let up = c.to_ascii_uppercase();
+            app.status = format!("«{c}» no hace nada aquí · ¿querías Ctrl+{up}? · F1 ayuda");
+            return;
+        }
+        if !c.is_control() {
+            app.status =
+                format!("«{c}» no hace nada en NORMAL · i escribir · / buscar · F1 ayuda");
+            return;
+        }
+    }
+    app.status = "Tecla sin función en NORMAL · F1 ayuda".into();
 }

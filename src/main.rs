@@ -191,6 +191,8 @@ pub(crate) fn main() -> Result<()> {
         bookmarks: Vec::new(),
         help_open: false,
         help_scroll: 0,
+        help_query: String::new(),
+        help_filtro: false,
         program: None,
         menu_open: false,
         menu_cursor: 0,
@@ -443,8 +445,7 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                 // Ctrl+F, flechas…)
                 if app.mode == Mode::Program {
                     if k.code == KeyCode::F(1) {
-                        app.help_open = true;
-                        app.help_scroll = 0;
+                        app.abrir_ayuda();
                         continue;
                     }
                     if let Some(sc) = shortcut_of(k) {
@@ -495,8 +496,7 @@ pub(crate) fn run(app: &mut App) -> Result<()> {
                 }
                 // F1: ayuda desde cualquier panel, el shell incluido
                 if k.code == KeyCode::F(1) {
-                    app.help_open = true;
-                    app.help_scroll = 0;
+                    app.abrir_ayuda();
                     continue;
                 }
                 // Ctrl+Tab lo traga la terminal; Shift+Tab (CSI Z, KeyCode::BackTab) llega siempre
@@ -737,10 +737,46 @@ pub(crate) fn handle_help_key(app: &mut App, k: KeyEvent) {
     if k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
         return;
     }
+    // capturando el filtro: todo lo imprimible va a la consulta
+    if app.help_filtro {
+        match k.code {
+            KeyCode::Esc => {
+                app.help_filtro = false;
+                app.help_query.clear();
+                app.help_scroll = 0;
+            }
+            KeyCode::Enter => app.help_filtro = false,
+            KeyCode::Backspace => {
+                app.help_query.pop();
+                app.help_scroll = 0;
+            }
+            KeyCode::Char(c) => {
+                app.help_query.push(c);
+                app.help_scroll = 0;
+            }
+            _ => {}
+        }
+        return;
+    }
     match k.code {
-        // la misma tecla que abre la ayuda la cierra (F1 / ?)
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(1) | KeyCode::Char('?') => {
-            app.help_open = false;
+        // Esc con filtro puesto lo limpia; sin filtro cierra la ayuda.
+        // F1 / ? / q cierran siempre (la misma tecla que abre, cierra).
+        KeyCode::Esc => {
+            if app.help_query.is_empty() {
+                app.cerrar_ayuda();
+            } else {
+                app.help_query.clear();
+                app.help_scroll = 0;
+            }
+        }
+        KeyCode::Char('q') | KeyCode::F(1) | KeyCode::Char('?') => {
+            app.cerrar_ayuda();
+        }
+        // `/` busca dentro de la ayuda (como en el editor); la consulta
+        // anterior se descarta para escribir una nueva
+        KeyCode::Char('/') => {
+            app.help_filtro = true;
+            app.help_query.clear();
             app.help_scroll = 0;
         }
         KeyCode::Char('j') | KeyCode::Down => {

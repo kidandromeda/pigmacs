@@ -176,11 +176,37 @@ GENERAL
   Ctrl+F / Ctrl+T     tree de ficheros / terminal (T: ir y salir)
   Ctrl+P / Ctrl+G     menú de programas / cerrar programa en marcha
   Ctrl+X              lanzador de aplicaciones gráficas (startx)
+
+DESCUBRIR SIN MANUAL
+  /                   buscar dentro de esta ayuda (Esc limpia el filtro;
+                      otra vez Esc cierra la ayuda)
+  j/k · g/G           mover la ayuda · Enter deja de escribir el filtro
+  teclas a medias     al pulsar z, g, d, m o ' la barra inferior muestra
+                      las continuaciones posibles (which-key)
+  tecla sin función   si una tecla no hace nada aquí se sugiere el atajo
+                      homónimo (K -> Ctrl+K) en vez de quedarse en silencio
 "#;
 
 pub(crate) fn draw_help(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, fr: &mut Frame) {
-    let lines: Vec<&str> = HELP_TEXT.lines().collect();
+    // la ayuda es buscable: con un filtro sólo se ven las líneas que
+    // contienen el texto (sin distinguir mayúsculas)
+    let todas: Vec<&str> = HELP_TEXT.lines().collect();
+    let q = app.help_query.to_lowercase();
+    let lines: Vec<&str> = if q.is_empty() {
+        todas
+    } else {
+        todas
+            .into_iter()
+            .filter(|l| l.to_lowercase().contains(&q))
+            .collect()
+    };
+    // la última fila del área queda para la barra del filtro
     let max = editor_rows.saturating_sub(1) as usize;
+    if lines.is_empty() {
+        let aviso = format!("Sin coincidencias para «{}» · Esc limpia", app.help_query);
+        let clean: String = aviso.chars().take(area_w as usize).collect();
+        fr.text(bx, 0, &clean, bold(WARN));
+    }
     let start = app.help_scroll.min(lines.len().saturating_sub(max.max(1)));
     let end = (start + max).min(lines.len());
     for (i, l) in lines[start..end].iter().enumerate() {
@@ -237,6 +263,42 @@ pub(crate) fn draw_help(app: &mut App, editor_rows: u16, bx: u16, area_w: u16, f
             desc,
             fg(FG),
         );
+    }
+
+    // barra del filtro (última fila del área): consulta a la izquierda y
+    // ayuda de uso + recuento a la derecha
+    if app.help_filtro || !app.help_query.is_empty() {
+        let y = editor_rows.saturating_sub(1);
+        let pref = format!("/{}", app.help_query);
+        let shown: String = pref.chars().take(area_w as usize).collect();
+        fr.text(bx, y, &shown, fg(ACCENT_HI));
+        let info = if app.help_filtro {
+            format!("{} líneas · Enter deja · Esc limpia", lines.len())
+        } else {
+            format!("{} líneas · / edita · Esc limpia", lines.len())
+        };
+        let w = area_w as usize;
+        let n = info.chars().count();
+        if n < w {
+            fr.text(bx + (w - n) as u16, y, &info, fg(DIM));
+        }
+    }
+}
+
+/// barra del modo NORMAL; con una secuencia a medias (which-key) muestra las
+/// continuaciones posibles de ese prefijo en lugar de los atajos generales
+fn barra_normal(pendiente: Option<char>) -> &'static str {
+    match pendiente {
+        Some('z') => {
+            "plegado · a alternar · c cerrar · o abrir · r todo abierto · m todo cerrado · n números · Esc cancela"
+        }
+        Some('d') => "dd borrar la línea · Esc cancela",
+        Some('g') => "gg ir al principio · 12G ir a la línea 12 · Esc cancela",
+        Some('m') => "m<x> fija la marca <x> · Esc cancela",
+        Some('\'') => "'<x> salta a la marca <x> · Esc cancela",
+        _ => {
+            "i · u deshacer · Ctrl+R rehacer · Tab plegar · Ctrl+F tree · Ctrl+T terminal · Ctrl+E enviar · Ctrl+S guardar · F1 ayuda · Ctrl+Q salir"
+        }
     }
 }
 
@@ -462,9 +524,12 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
         rx += s.chars().count() as u16 + 1;
     }
 
-    // barra de ayuda permanente: atajos del modo activo, siempre visibles
+    // barra de ayuda permanente: atajos del modo activo, siempre visibles.
+    // which-key: con una secuencia a medias (z, g, d, m, ') se muestran sus
+    // continuaciones posibles en lugar de la barra normal
     let help = match app.mode {
-        Mode::Normal | Mode::Insert | Mode::Visual => {
+        Mode::Normal => barra_normal(app.pending),
+        Mode::Insert | Mode::Visual => {
             "i · u deshacer · Ctrl+R rehacer · Tab plegar · Ctrl+F tree · Ctrl+T terminal · Ctrl+E enviar · Ctrl+S guardar · F1 ayuda · Ctrl+Q salir"
         }
         Mode::Browser => {
@@ -475,10 +540,10 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
         }
         Mode::Shell => {
             "escribe comandos · Ctrl+B tmux · Ctrl+A/E/K readline · Ctrl+J editor · Ctrl+Q salir"
-        },
+        }
         Mode::Program => {
             "teclas al programa · Ctrl+P menú · Ctrl+G cerrar · Ctrl+J editor · Ctrl+Q salir"
-        },
+        }
     };
     draw_keybar(
         &mut fr,
@@ -489,8 +554,10 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
     );
 
     // cursor bloque del editor: celda en vídeo inverso dentro del frame
+    // (con la ayuda abierta no se pinta: tapaba el texto del manual)
     if !app.sudo_prompt
         && !app.searching
+        && !app.help_open
         && !matches!(app.mode, Mode::Ai | Mode::Browser | Mode::Shell | Mode::Program)
     {
         let y = app.screen_row_of(app.row).min(editor_rows.saturating_sub(1) as usize) as u16;

@@ -38,6 +38,20 @@ cargo build --release
 ./target/release/pigmacs fichero.org
 ```
 
+## Descubrir sin manual
+
+Pensado para consola de texto, donde no hay pistas visuales:
+
+- **Which-key**: al pulsar un prefijo (`z`, `g`, `d`, `m`, `'`) la barra
+  inferior cambia y muestra las continuaciones posibles
+  (`plegado · a alternar · c cerrar · o abrir · …`).
+- **Tecla sin función → sugerencia**: si una tecla no hace nada en NORMAL,
+  el aviso lo dice y propone el atajo homónimo (`K` → `Ctrl+K`) en vez de
+  quedarse en silencio.
+- **Ayuda buscable** (`F1` o `?`): `/` filtra el manual por texto
+  (`/guardar` deja sólo lo relacionado con guardar), `j/k` navega, `Esc`
+  limpia el filtro y una segunda vez cierra la ayuda.
+
 ## Modos
 
 **Normal** — movimiento y comandos:

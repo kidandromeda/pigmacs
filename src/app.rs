@@ -115,9 +115,11 @@ pub(crate) struct App {
     pub(crate) show_numbers: bool,
     // marcadores de directorio del tree
     pub(crate) bookmarks: Vec<PathBuf>,
-    // ventana de ayuda
+    // ventana de ayuda (buscable con `/`)
     pub(crate) help_open: bool,
     pub(crate) help_scroll: usize,
+    pub(crate) help_query: String,
+    pub(crate) help_filtro: bool,
     // programas lanzados desde el menú (Ctrl+P)
     pub(crate) program: Option<Program>,
     pub(crate) menu_open: bool,
@@ -831,6 +833,22 @@ impl App {
             self.reconstruir_visibles();
             vueltas += 1;
         }
+    }
+
+    /// abre la ayuda limpia (sin el filtro que se usara la vez anterior)
+    pub(crate) fn abrir_ayuda(&mut self) {
+        self.help_open = true;
+        self.help_scroll = 0;
+        self.help_query.clear();
+        self.help_filtro = false;
+    }
+
+    /// cierra la ayuda y olvida el filtro
+    pub(crate) fn cerrar_ayuda(&mut self) {
+        self.help_open = false;
+        self.help_scroll = 0;
+        self.help_query.clear();
+        self.help_filtro = false;
     }
 
     pub(crate) fn toggle_fold(&mut self, row: usize) {

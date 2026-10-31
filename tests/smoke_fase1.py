@@ -310,5 +310,48 @@ s4.send("\x1bq", 0.7)                    # Alt+Q sale
 check("plegues: Alt+Q sale", s4.wait_exit(4))
 s4.close()
 
+# ——— sesión 5: descubrimiento (which-key, sugerencias, ayuda buscable) ———
+s5 = Session(files={"desc.org": "* cabecera\n  texto\n"})
+s5.read(1.3)
+s5.send("z", 0.4)                        # prefijo z: which-key en la barra
+s5.read(0.5)
+t = s5.scr.text()
+check("descubrir: z muestra which-key",
+      "plegado · a alternar" in t and "todo abierto" in t, t[-200:])
+s5.send("\x1b", 0.4)                     # Esc cancela sin ruido
+s5.read(0.5)
+check("descubrir: Esc cancela la secuencia", "plegado · a alternar" not in s5.scr.text())
+s5.send("K", 0.5)                        # mayúscula sin función -> sugerencia
+s5.read(0.5)
+check("descubrir: sugiere Ctrl+K", "¿querías Ctrl+K?" in s5.scr.text(), s5.scr.text()[-220:])
+s5.send("w", 0.5)
+s5.read(0.5)
+check("descubrir: avisa de tecla sin función", "no hace nada en NORMAL" in s5.scr.text())
+# ayuda buscable: F1 -> / -> guardar -> Enter
+s5.send("\x1bOP", 0.6)
+s5.read(0.5)
+check("ayuda: F1 abre el manual", "MANUAL COMPLETO" in s5.scr.text())
+s5.send("/", 0.3)
+for ch in "guardar":
+    s5.send(ch, 0.12)
+s5.send("\r", 0.5)
+s5.read(0.6)
+t = s5.scr.text()
+check("ayuda: / filtra las líneas",
+      "Ctrl+S" in t and "PROGRAMAS EN LA VENTANA PRINCIPAL" not in t, t[:300])
+check("ayuda: barra del filtro", "/guardar" in t and "Esc limpia" in t, t[-200:])
+s5.send("/", 0.3)                        # consulta nueva: se descarta la anterior
+for ch in "zzz":
+    s5.send(ch, 0.15)
+s5.read(0.6)
+check("ayuda: sin coincidencias", "Sin coincidencias" in s5.scr.text())
+s5.send("\x1b", 0.4)                     # Esc limpia el filtro (sigue en la ayuda)
+s5.send("\x1b", 0.4)                     # Esc cierra la ayuda
+s5.read(0.6)
+check("ayuda: Esc cierra tras limpiar", "MANUAL COMPLETO" not in s5.scr.text())
+s5.send("\x1bq", 0.7)
+check("descubrir: Alt+Q sale", s5.wait_exit(4))
+s5.close()
+
 print("\n%d fallos" % len(fails))
 sys.exit(1 if fails else 0)

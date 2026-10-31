@@ -29,10 +29,10 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (126 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (136 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 64 checks — smoke de fases anteriores (incluye sesión 4: plegues)
+python3 smoke_fase1.py     # 74 checks — smoke de fases anteriores (sesiones 4-5: plegues y descubrimiento)
 python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, Ctrl+X…
 ```
 
@@ -44,7 +44,7 @@ python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, 
 - **Regla de oro**: `cargo build` sin *warnings* + las 3 suites en verde
   **antes** de cada commit.
 
-## Estructura de `src/` (v4.0.0, ~5970 líneas)
+## Estructura de `src/` (v4.0.0, ~6050 líneas)
 
 | módulo | líneas | contenido |
 |---|---|---|
@@ -209,16 +209,24 @@ que pigmacs sea *bonita*, con la elegancia que se puede lograr en una
    tecleado tal cual si no hay coincidencia. Ver §3 del informe.
    (+ bell y banda de estado de la IA, §3 #C.)
 
-**Definición de hecho:** `cargo build` 0 warnings + 126/126 checks en verde
+**Definición de hecho:** `cargo build` 0 warnings + 136/136 checks en verde
 antes de commit; la comprobación **en una consola VT real** (no en xterm)
 está pendiente de que la haga el usuario (el agente no tiene acceso a
 `/dev/ttyN`). `HELP_TEXT`, README e informe se actualizaron en v3.1.0.
 
 ## Estado (última actualización: 2026-10-31)
 
+- **Descubrimiento sin manual** (pendiente de release; sobre `main` tras
+  v4.0.0): **which-key** en la barra inferior al pulsar un prefijo (`z`, `g`,
+  `d`, `m`, `'`) con sus continuaciones · **sugerencia de tecla sin
+  función** en NORMAL (`K` → «¿querías Ctrl+K?», con `i`/`/`/`F1` de
+  recordatorio) · **ayuda buscable** (`F1` + `/`: filtra el manual por
+  texto, barra con la consulta y el recuento, `Esc` limpia y otra vez
+  cierra). Arreglado de paso: el cursor del editor se pintaba **encima** de
+  la ayuda. 10 checks nuevos (sesión 5 «descubrimiento»).
 - **v4.0.0 publicada** (tag `v4.0.0`, release en GitHub con binario): va
   dedicada al fix de rendimiento de abajo — deja el movimiento *plano* en
-  ficheros `.org` grandes. Sin cambios de atajos ni de UI; 126/126 checks
+  ficheros `.org` grandes. Sin cambios de atajos; 136/136 checks
   en verde.
 - **Rendimiento O(n²) → plano en ficheros grandes** (el usuario reportó
   latencias de ~10 s por pulsación en `.org` grandes, peor cuanto más cerca
@@ -303,4 +311,4 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   (incluido el shell), `MENU` con argv (neovim→nvim, lynx/w3m con
   www.duckduckgo.com) y 15 programas (con mc como «Midnight Commander»).
 - Tag `v2.0.0` + commit `52facf6` **sólo locales**: git sólo local, sin push.
-- 126/126 checks en verde, 0 warnings.
+- 136/136 checks en verde, 0 warnings.

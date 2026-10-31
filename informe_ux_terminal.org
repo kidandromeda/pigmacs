@@ -140,6 +140,32 @@ el fichero entero). Resultado (release): **2274 ms → 1,6 ms** en 160k
 líneas, *plano* en cualquier tamaño. 11 checks nuevos en =smoke_fase1.py=
 (sesión 4 «plegues», paridad verificada con el binario anterior).
 
+** 1.10 Herramientas de descubrimiento y ayuda buscable (nuevo)
+
+*Síntoma:* en una tty sin entorno gráfico no hay pistas visuales. El usuario
+que entra sin manual no sabe qué teclas existen, y cuando pulsa una tecla sin
+función *no pasa nada*: parece que el programa está roto. La ayuda existía
+pero era un muro de texto que había que recorrer a mano.
+
+*Arreglo:*
+
+- **Which-key**: con un prefijo a medias (`z`, `g`, `d`, `m`, `'`) la barra
+  inferior sustituye los atajos generales por las continuaciones posibles
+  (`plegado · a alternar · c cerrar · o abrir · r todo abierto · …`). `Esc`
+  cancela sin ruido.
+- **Sugerencia de tecla sin función**: en NORMAL, una tecla que no hace nada
+  lo dice y propone el atajo homónimo (`K` → «¿querías Ctrl+K?»), o
+  recuerda las básicas (`i escribir · / buscar · F1 ayuda`).
+- **Ayuda buscable**: `F1` (o `?`) y `/` filtran el manual por texto
+  (sin distinguir mayúsculas) con barra de consulta y recuento de líneas;
+  `j/k/g/G` navegan y `Esc` limpia el filtro — otra vez cierra. Sin
+  coincidencias se avisa («Sin coincidencias para «zzz»»).
+
+*Arreglado de paso:* el cursor del editor se pintaba **encima** de la ayuda
+(tapaba el texto del manual, p. ej. la «S» de «MANUAL»); ahora se oculta
+mientras la ayuda está abierta. 10 checks nuevos en `smoke_fase1.py`
+(sesión 5 «descubrimiento»).
+
 * 2. Entregado en esta fase: menú de programas (fase 2)
 
 ** 2.1 Qué hace
