@@ -1,8 +1,8 @@
 // ————— pigmacs · tema: paleta y estilos comunes —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 //
 // Paleta semántica única de la aplicación. pigmacs es un programa para
 // *tty real*: sólo se usan los 16 colores ANSI (nada de 256/truecolor) y

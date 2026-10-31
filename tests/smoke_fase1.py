@@ -2,8 +2,8 @@
 # ————— pigmacs · tests · smoke de regresión (fases 1 y A) —————
 # Autor:      kidandromeda
 # Licencia:   MIT
-# Versión:    3.1.0
-# Fecha:      2026-10-14
+# Versión:    4.0.0
+# Fecha:      2026-10-31
 """Smoke de regresión (fase 1 + parte A): modos, editor, shell, tree, IA, ayuda."""
 import sys, time, os, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -248,6 +248,67 @@ check("cabeceras: el cursor avanzó a la línea 19", "19:1" in t, t[-120:])
 s3.send("\x1bq", 0.7)                    # Alt+Q sale
 check("cabeceras: Alt+Q sale", s3.wait_exit(4))
 s3.close()
+
+# ——— sesión 4: plegar/desplegar y despliegue automático al buscar ———
+# cubre el motor de visibilidad precalculada (reconstruir_visibles):
+# Tab/za/zc/zo/zr/zm y el reveal de los pliegues que cubren un salto
+org4 = []
+for i in range(1, 6):
+    org4.append(f"* sec{i}")
+    for c in range(1, 5):
+        org4.append(f"  contenido {i}.{c}")
+    org4.append("fin")
+s4 = Session(files={"plegues.org": "\n".join(org4) + "\n"})
+s4.read(1.3)
+check("plegues: arranca plegado", "contenido 1.1" not in s4.scr.text())
+s4.send("\t", 0.4)                        # Tab: despliega sec1
+s4.read(0.5)
+t = s4.scr.text()
+check("plegues: Tab despliega", "contenido 1.1" in t and "fin" in t, t[:300])
+s4.send("\t", 0.4)                        # Tab de nuevo: repliega
+s4.read(0.5)
+t = s4.scr.text()
+check("plegues: Tab repliega", "contenido 1.1" not in t and "[+]" in t, t[:300])
+s4.send("j", 0.3)                         # a sec2
+s4.send("z", 0.2)
+s4.send("c", 0.4)                         # zc: cierra sec2
+s4.read(0.5)
+check("plegues: zc cierra", "contenido 2.1" not in s4.scr.text())
+s4.send("z", 0.2)
+s4.send("o", 0.4)                         # zo: abre sec2
+s4.read(0.5)
+check("plegues: zo abre", "contenido 2.1" in s4.scr.text())
+s4.send("z", 0.2)
+s4.send("r", 0.5)                         # zr: todo abierto
+s4.read(0.6)
+t = s4.scr.text()
+# contenido 3.1 estaba plegada y el viewport llega hasta la línea ~19
+check("plegues: zr abre todo", "contenido 3.1" in t and "fin" in t, t[-200:])
+s4.send("z", 0.2)
+s4.send("m", 0.5)                         # zm: todo plegado (cursor revelado)
+s4.read(0.6)
+t = s4.scr.text()
+check("plegues: zm pliega todo", "contenido" not in t and "sec5" in t, t[-200:])
+# buscar dentro de una sección plegada: el pliegue que la cubre se abre
+s4.send("/", 0.3)
+for ch in "contenido 3.2":
+    s4.send(ch, 0.12)
+s4.send("\r", 0.6)
+s4.read(0.6)
+t = s4.scr.text()
+check("plegues: buscar dentro despliega", "contenido 3.2" in t, t[-260:])
+check("plegues: cursor en la coincidencia", "15:3" in t, t[-120:])
+# gg + dd sobre una cabecera plegada: la borra sin romper los pliegues
+s4.send("g", 0.2)
+s4.send("g", 0.5)                         # gg: primera fila visible
+s4.send("d", 0.2)
+s4.send("d", 0.5)                         # dd: borra la cabecera
+s4.read(0.6)
+t = s4.scr.text()
+check("plegues: dd borra cabecera", "* sec1" not in t, t[:200])
+s4.send("\x1bq", 0.7)                    # Alt+Q sale
+check("plegues: Alt+Q sale", s4.wait_exit(4))
+s4.close()
 
 print("\n%d fallos" % len(fails))
 sys.exit(1 if fails else 0)

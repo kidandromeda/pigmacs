@@ -1,8 +1,8 @@
 // ————— pigmacs · render: dibujo del frame completo —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 use crate::{
     ai::draw_ai_pane,
     app::{layout, App, Mode},
@@ -298,9 +298,7 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
 
     app.sanitize_folds();
     if app.is_hidden(app.top) {
-        while app.top < app.lines.len() && app.is_hidden(app.top) {
-            app.top += 1;
-        }
+        app.top = app.visible_desde(app.top);
     }
     if app.is_hidden(app.row) {
         app.reveal_row(app.row);
@@ -317,8 +315,14 @@ pub(crate) fn draw(app: &mut App) -> Result<()> {
         p.resize(editor_rows.max(1), area_w.max(1));
     }
 
-    if !app.search_query.is_empty() {
+    // rebuscar coincidencias sólo si cambió la consulta o el texto: antes
+    // se recorría el fichero entero en CADA frame (cada tecla)
+    if !app.search_query.is_empty()
+        && (app.matches_query != app.search_query || app.matches_ver != app.texto_ver)
+    {
         app.matches = compute_matches(&app.lines, &app.search_query);
+        app.matches_query = app.search_query.clone();
+        app.matches_ver = app.texto_ver;
         if app.match_idx >= app.matches.len() {
             app.match_idx = 0;
         }

@@ -1,8 +1,8 @@
 // ————— pigmacs · editor de texto/org —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 use crate::{
     app::{App, Mode},
     frame::{Frame, Style},
@@ -98,15 +98,16 @@ pub(crate) fn handle_editor_key(app: &mut App, k: KeyEvent) {
                     match k.code {
                         KeyCode::Char('a') => app.toggle_fold(r),
                         KeyCode::Char('c') => {
+                            // zc: cerrar sólo si está abierta. Ojo: hay que
+                            // pasar por toggle_fold — mutar `folded` a mano
+                            // dejaba la caché de visibilidad obsoleta
                             if app.header_level(r).is_some() && !app.folded.contains(&r) {
-                                app.folded.insert(r);
-                                app.status = "Cabecera plegada".into();
+                                app.toggle_fold(r);
                             }
                         }
                         KeyCode::Char('o') => {
                             if app.folded.contains(&r) {
-                                app.folded.remove(&r);
-                                app.status = "Cabecera abierta".into();
+                                app.toggle_fold(r);
                             }
                         }
                         KeyCode::Char('r') => app.unfold_all(),
@@ -281,11 +282,13 @@ pub(crate) fn handle_search_key(app: &mut App, k: KeyEvent) {
             app.searching = false;
             app.search_query.clear();
             app.matches.clear();
+            app.matches_query.clear();
         }
         KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
             app.searching = false;
             app.search_query.clear();
             app.matches.clear();
+            app.matches_query.clear();
         }
         KeyCode::Enter => {
             app.searching = false;
@@ -293,6 +296,8 @@ pub(crate) fn handle_search_key(app: &mut App, k: KeyEvent) {
                 return;
             }
             app.matches = compute_matches(&app.lines, &app.search_query);
+            app.matches_query = app.search_query.clone();
+            app.matches_ver = app.texto_ver;
             app.match_idx = app
                 .matches
                 .iter()
@@ -660,7 +665,11 @@ pub(crate) fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w
 
     while screen_y < editor_rows && real < app.lines.len() {
         if app.is_hidden(real) {
-            real += 1;
+            // saltar al tramo visible siguiente (o al final: si no queda
+            // ninguna fila visible >= `real`, `visible_desde` devolvería
+            // `real` y el bucle no avanzaría)
+            let sig = app.visible_desde(real);
+            real = if sig > real { sig } else { app.lines.len() };
             continue;
         }
         let idx = real;
@@ -702,6 +711,14 @@ pub(crate) fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w
         }
 
         let mut printed = 0usize;
+        // resaltado de la búsqueda: `matches` está ordenada por (fila, col);
+        // bisect por fila una vez y bisect por columna en cada celda. Antes
+        // cada celda recorría TODAS las coincidencias: O(celdas × m) por
+        // frame (con miles de coincidencias, segundos por tecla)
+        let qlen = app.search_query.chars().count();
+        let ini_hits = app.matches.partition_point(|&(r, _)| r < idx);
+        let fin_hits = app.matches.partition_point(|&(r, _)| r <= idx);
+        let hits = &app.matches[ini_hits..fin_hits];
         for (x, ch) in line.chars().skip(app.left).enumerate() {
             if x + gutter >= area_w as usize {
                 break;
@@ -709,15 +726,12 @@ pub(crate) fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w
             printed += 1;
             let col_abs = app.left + x;
             let selected = app.mode == Mode::Visual && is_selected(app, idx, col_abs);
-            // resaltar el rango completo de cada coincidencia, no solo su inicio
-            let hit = if app.search_query.is_empty() {
-                false
-            } else {
-                let qlen = app.search_query.chars().count();
-                app.matches
-                    .iter()
-                    .any(|&(r, c)| r == idx && col_abs >= c && col_abs < c + qlen)
-            };
+            // ¿cae esta celda dentro de alguna coincidencia? (su inicio
+            // está en [col_abs-qlen+1, col_abs])
+            let desde = col_abs.saturating_sub(qlen.saturating_sub(1));
+            let hit = !app.search_query.is_empty()
+                && hits.partition_point(|&(_, c)| c < desde)
+                    != hits.partition_point(|&(_, c)| c <= col_abs);
             let base = match &src_st {
                 Some(v) => v.get(col_abs).copied().unwrap_or(line_st),
                 None => line_st,
@@ -748,7 +762,8 @@ pub(crate) fn draw_editor_lines(app: &mut App, editor_rows: u16, bx: u16, area_w
                     fg(WARN),
                 );
             }
-            real = app.fold_end(idx) + 1;
+            // el pliegue oculta todo hasta la próxima fila visible
+            real = app.visible_desde(idx + 1);
         } else {
             real += 1;
         }

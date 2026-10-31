@@ -1,8 +1,8 @@
 // ————— pigmacs · declaraciones mod · prelude · main() · run() · atajos globales —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 mod ai;
 mod app;
 mod browser;
@@ -153,7 +153,13 @@ pub(crate) fn main() -> Result<()> {
         searching: false,
         matches: Vec::new(),
         match_idx: 0,
+        matches_query: String::new(),
+        matches_ver: 0,
+        texto_ver: 0,
         folded: HashSet::new(),
+        ocultas: Vec::new(),
+        visibles: Vec::new(),
+        cov: Vec::new(),
         marks: HashMap::new(),
         browser,
         ai_lines: Vec::new(),
@@ -205,6 +211,7 @@ pub(crate) fn main() -> Result<()> {
             app.folded.insert(r);
         }
     }
+    app.reconstruir_visibles();
 
     // aviso del kernel en consolas de texto: si no se puede bajar el nivel
     // de consola, se repinta la pantalla cada 2 s (run()) para borrarlos

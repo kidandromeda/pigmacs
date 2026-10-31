@@ -1,8 +1,8 @@
 // ————— pigmacs · panel de IA —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 use crate::{
     app::App,
     frame::{Frame, Style, strip_ansi},

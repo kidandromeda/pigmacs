@@ -1,8 +1,8 @@
 // ————— pigmacs · estado central —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 use crate::{
     browser::Browser,
     frame::{strip_ansi, Frame},
@@ -36,6 +36,18 @@ pub(crate) enum Mode {
     Program, // programa lanzado desde el menú (Ctrl+P), con su propio PTY
 }
 
+/// techo de memoria del historial de deshacer: cada snapshot guarda el
+/// fichero entero (`Vec<String>` clonado), así que en archivos grandes el
+/// tope por nº de pasos no basta para no comerse la RAM
+const UNDO_MAX_BYTES: usize = 64 << 20; // 64 MiB
+
+/// bytes aproximados de una pila de snapshots (24 B de overhead por línea)
+fn undo_bytes(pila: &[(Vec<String>, usize, usize)]) -> usize {
+    pila.iter()
+        .map(|(l, _, _)| l.iter().map(|s| s.len() + 24).sum::<usize>())
+        .sum()
+}
+
 pub(crate) struct App {
     pub(crate) path: PathBuf,
     pub(crate) lines: Vec<String>,
@@ -54,8 +66,20 @@ pub(crate) struct App {
     pub(crate) searching: bool,
     pub(crate) matches: Vec<(usize, usize)>,
     pub(crate) match_idx: usize,
+    // consulta y versión del texto con la que se calculó `matches`: si no
+    // cambian, no se vuelve a escanear el fichero entero en cada frame
+    pub(crate) matches_query: String,
+    pub(crate) matches_ver: u64,
+    pub(crate) texto_ver: u64, // se incrementa con cada edición del texto
     // org
     pub(crate) folded: HashSet<usize>,
+    // visibilidad precalculada (ver `reconstruir_visibles`): cada consulta
+    // de plegado pasa a costar O(1)/O(log n). Antes `is_hidden` recorría
+    // todos los pliegues y cada pliegue recorría el fichero (O(n²) por
+    // tecla: era el cursor lento en archivos .org grandes)
+    pub(crate) ocultas: Vec<bool>,   // fila oculta por algún pliegue
+    pub(crate) visibles: Vec<usize>, // filas visibles, en orden creciente
+    pub(crate) cov: Vec<usize>,      // cabecera plegada que oculta cada fila
     // marcas de vim: m<x> fija · '<x> salta
     pub(crate) marks: HashMap<char, (usize, usize)>,
     // navegador
@@ -196,22 +220,21 @@ impl App {
         // se cuentan filas *visibles*: las plegadas no ocupan pantalla. Con
         // filas lógicas, pasar de una cabecera plegada a otra daba un `top`
         // menor que la fila real, el texto saltaba hacia arriba y el cursor
-        // aparecía al principio de la ventana
-        let mut r = self.row;
-        let mut contadas = 0usize;
-        while contadas < visible && r >= self.top {
-            if !self.is_hidden(r) {
-                contadas += 1;
-                if contadas == visible && r > self.top {
-                    // `visible` filas visibles entre `r` y el cursor: el
-                    // cursor queda justo en la última del margen
-                    self.top = r;
-                }
-            }
-            if r == 0 {
-                break;
-            }
-            r -= 1;
+        // aparecía al principio de la ventana. La lista `visibles` (ordena y
+        // se busca con bisect) hace este cálculo en O(log n): antes se
+        // retrocedía fila a fila consultando `is_hidden` (O(n) por fila)
+        let Some(irow) = self.visibles.binary_search(&self.row).ok() else {
+            return; // fila oculta: `draw()` la revela y reintenta
+        };
+        let itop = self.visibles.partition_point(|&r| r < self.top);
+        if irow + 1 <= itop + visible {
+            return; // ya caben `visible` filas visibles hasta el cursor
+        }
+        let nueva = irow + 1 - visible;
+        if nueva < self.visibles.len() && self.visibles[nueva] > self.top {
+            // `visible` filas visibles entre `nueva` y el cursor: el cursor
+            // queda justo en la última del margen
+            self.top = self.visibles[nueva];
         }
     }
 
@@ -226,6 +249,7 @@ impl App {
         line.insert(byte, ch);
         self.col += 1;
         self.dirty = true;
+        self.texto_ver += 1;
     }
 
     pub(crate) fn newline(&mut self) {
@@ -238,9 +262,11 @@ impl App {
         let rest = self.lines[self.row].split_off(byte);
         self.lines.insert(self.row + 1, rest);
         self.shift_folds_insert(self.row + 1);
+        self.reconstruir_visibles();
         self.row += 1;
         self.col = 0;
         self.dirty = true;
+        self.texto_ver += 1;
         self.ensure_visible();
     }
 
@@ -260,8 +286,10 @@ impl App {
             self.row -= 1;
             self.col = self.lines[self.row].chars().count();
             self.lines[self.row].push_str(&current);
+            self.reconstruir_visibles();
         }
         self.dirty = true;
+        self.texto_ver += 1;
         self.clamp_col();
     }
 
@@ -283,6 +311,7 @@ impl App {
         }
         self.clamp_col();
         self.dirty = true;
+        self.texto_ver += 1;
     }
 
     pub(crate) fn delete_line(&mut self) {
@@ -292,11 +321,13 @@ impl App {
         } else {
             self.lines.remove(self.row);
             self.shift_folds_remove(self.row);
+            self.reconstruir_visibles();
             if self.row >= self.lines.len() {
                 self.row = self.lines.len() - 1;
             }
         }
         self.col = 0;
+        self.texto_ver += 1;
         self.ensure_visible();
         self.dirty = true;
     }
@@ -305,8 +336,10 @@ impl App {
         self.push_undo("line");
         self.lines.insert(self.row + 1, String::new());
         self.shift_folds_insert(self.row + 1);
+        self.reconstruir_visibles();
         self.row += 1;
         self.col = 0;
+        self.texto_ver += 1;
         self.ensure_visible();
         self.dirty = true;
     }
@@ -315,7 +348,9 @@ impl App {
         self.push_undo("line");
         self.lines.insert(self.row, String::new());
         self.shift_folds_insert(self.row);
+        self.reconstruir_visibles();
         self.col = 0;
+        self.texto_ver += 1;
         self.ensure_visible();
         self.dirty = true;
     }
@@ -360,12 +395,14 @@ impl App {
             self.lines.drain(r1..=r2);
             self.shift_folds_range(r1, r2);
             self.lines.insert(r1, merged);
+            self.reconstruir_visibles();
             self.row = r1;
             self.col = c1;
         }
         self.anchor = None;
         self.mode = Mode::Normal;
         self.clamp_col();
+        self.texto_ver += 1;
         self.ensure_visible();
         self.dirty = true;
     }
@@ -479,6 +516,11 @@ impl App {
         if self.undo.len() > 300 {
             self.undo.remove(0);
         }
+        // cada snapshot es el fichero entero: en un .org grande 300 copias
+        // serían varios GB. Además del tope por nº de pasos, tope por bytes
+        while self.undo.len() > 1 && undo_bytes(&self.undo) > UNDO_MAX_BYTES {
+            self.undo.remove(0);
+        }
         self.undo_kind = Some(kind);
         self.redo.clear();
     }
@@ -507,9 +549,11 @@ impl App {
 
     pub(crate) fn restore_state(&mut self, lines: Vec<String>, row: usize, col: usize) {
         self.lines = lines;
+        self.reconstruir_visibles();
         self.row = row.min(self.lines.len().saturating_sub(1));
         self.col = col;
         self.clamp_col();
+        self.texto_ver += 1;
         self.ensure_visible();
         self.dirty = true;
     }
@@ -601,8 +645,11 @@ impl App {
                 self.folded.insert(r);
             }
         }
+        self.reconstruir_visibles();
+        self.texto_ver += 1;
         self.search_query.clear();
         self.matches.clear();
+        self.matches_query.clear();
         self.pending = None;
         self.undo.clear();
         self.redo.clear();
@@ -661,70 +708,128 @@ impl App {
         }
     }
 
-    /// última línea cubierta por la cabecera `h` (contenido + subcabeceras)
-    pub(crate) fn fold_end(&self, h: usize) -> usize {
-        let Some(lvl) = self.header_level(h) else { return h };
-        let mut r = h + 1;
-        while r < self.lines.len() {
+    /// reconstruye la visibilidad (`ocultas`/`visibles`/`cov`) en O(n) con
+    /// dos pasadas de pila monótona. Se llama sólo cuando cambian los
+    /// pliegues o la estructura de líneas; así cada consulta de plegado en
+    /// el bucle de teclas y en el render es O(1)/O(log n). Antes cada
+    /// consulta recorría el fichero entero (`fold_end` escaneaba hacia
+    /// delante y `is_hidden` probaba todos los pliegues): mover el cursor
+    /// en un .org grande costaba O(n²) por tecla y empeoraba cuanto más
+    /// adelante estaba el cursor.
+    pub(crate) fn reconstruir_visibles(&mut self) {
+        let n = self.lines.len();
+        self.ocultas = vec![false; n];
+        self.cov = vec![usize::MAX; n];
+        self.visibles.clear();
+
+        // pasada A — fin de cada cabecera: vísperas del próximo header de
+        // nivel <= al suyo. Pila monótona: al ver la cabecera r, las de
+        // nivel >= l que quedan en la pila terminan en r-1
+        let mut fin: Vec<Option<usize>> = vec![None; n];
+        let mut pila: Vec<(u8, usize)> = Vec::new(); // (nivel, fila)
+        for r in 0..n {
             if let Some(l) = self.header_level(r) {
-                if l <= lvl {
+                while let Some(&(sl, sr)) = pila.last() {
+                    if sl >= l {
+                        fin[sr] = Some(r - 1);
+                        pila.pop();
+                    } else {
+                        break;
+                    }
+                }
+                pila.push((l, r));
+            }
+        }
+        let ultima = n.saturating_sub(1);
+        for (_, sr) in pila {
+            fin[sr] = Some(ultima);
+        }
+
+        // pasada B — pliegues activos: una cabecera plegada oculta todo
+        // hasta su fin, incluidas sus subcabeceras (que siguen ocultas por
+        // el pliegue externo aunque también estén plegadas). `cov` guarda
+        // la cabecera que oculta cada fila, por si hay que desplegarla
+        let mut activos: Vec<(u8, usize, usize)> = Vec::new(); // (nivel, fin, cabecera)
+        for r in 0..n {
+            while let Some(&(_, e, _)) = activos.last() {
+                if e < r {
+                    activos.pop();
+                } else {
                     break;
                 }
             }
-            r += 1;
-        }
-        r - 1
-    }
-
-    pub(crate) fn is_hidden(&self, row: usize) -> bool {
-        if row >= self.lines.len() {
-            return false;
-        }
-        for &h in &self.folded {
-            if h < row && row <= self.fold_end(h) {
-                return true;
+            if let Some(&(_, _, h)) = activos.last() {
+                self.ocultas[r] = true;
+                self.cov[r] = h;
+            } else {
+                self.visibles.push(r);
+            }
+            if let Some(l) = self.header_level(r) {
+                while let Some(&(sl, _, _)) = activos.last() {
+                    if sl >= l {
+                        activos.pop();
+                    } else {
+                        break;
+                    }
+                }
+                if self.folded.contains(&r) {
+                    if let Some(e) = fin[r] {
+                        activos.push((l, e, r));
+                    }
+                }
             }
         }
-        false
+    }
+
+    /// ¿está la fila oculta por algún pliegue? O(1): consulta la caché
+    pub(crate) fn is_hidden(&self, row: usize) -> bool {
+        self.ocultas.get(row).copied().unwrap_or(false)
+    }
+
+    /// primera fila visible >= `row` (O(log n) por la lista `visibles`)
+    pub(crate) fn visible_desde(&self, row: usize) -> usize {
+        let i = self.visibles.partition_point(|&r| r < row);
+        self.visibles.get(i).copied().unwrap_or(row)
     }
 
     pub(crate) fn next_visible_row(&self, from: usize, dir: isize) -> Option<usize> {
-        let mut r = from as isize + dir;
-        while r >= 0 && (r as usize) < self.lines.len() {
-            let u = r as usize;
-            if !self.is_hidden(u) {
-                return Some(u);
-            }
-            r += dir;
+        if dir == 0 {
+            return Some(from);
         }
-        None
+        if dir > 0 {
+            let objetivo = from.saturating_add(dir as usize);
+            let i = self.visibles.partition_point(|&r| r < objetivo);
+            self.visibles.get(i).copied()
+        } else {
+            let objetivo = from.saturating_sub(dir.unsigned_abs());
+            let i = self.visibles.partition_point(|&r| r <= objetivo);
+            if i == 0 {
+                None
+            } else {
+                Some(self.visibles[i - 1])
+            }
+        }
     }
 
     pub(crate) fn first_visible(&self) -> usize {
-        (0..self.lines.len())
-            .find(|&r| !self.is_hidden(r))
-            .unwrap_or(0)
+        self.visibles.first().copied().unwrap_or(0)
     }
 
     pub(crate) fn last_visible(&self) -> usize {
-        (0..self.lines.len())
-            .rev()
-            .find(|&r| !self.is_hidden(r))
-            .unwrap_or(0)
+        self.visibles.last().copied().unwrap_or(0)
     }
 
+    /// descubre las filas ocultas bajo `row` desplegando los pliegues que
+    /// la cubren (una reconstrucción por pliegue retirado; anidados ≤ 64)
     pub(crate) fn reveal_row(&mut self, row: usize) {
-        if row >= self.lines.len() {
-            return;
-        }
-        let to_remove: Vec<usize> = self
-            .folded
-            .iter()
-            .copied()
-            .filter(|&h| h < row && row <= self.fold_end(h))
-            .collect();
-        for h in to_remove {
-            self.folded.remove(&h);
+        let mut vueltas = 0usize;
+        while self.is_hidden(row) && vueltas < 64 {
+            let Some(&h) = self.cov.get(row) else { break };
+            if !self.folded.remove(&h) {
+                break;
+            }
+            self.reconstruir_visibles();
+            vueltas += 1;
         }
     }
 
@@ -734,9 +839,12 @@ impl App {
         }
         if self.folded.contains(&row) {
             self.folded.remove(&row);
+            self.reconstruir_visibles();
         } else {
             self.folded.insert(row);
+            self.reconstruir_visibles();
             if self.is_hidden(self.row) {
+                // el cursor quedó dentro del pliegue: salta a la cabecera
                 self.row = row;
                 self.col = 0;
             }
@@ -755,12 +863,14 @@ impl App {
                 self.folded.insert(r);
             }
         }
+        self.reconstruir_visibles();
         self.reveal_row(self.row);
         self.status = "Todas plegadas".into();
     }
 
     pub(crate) fn unfold_all(&mut self) {
         self.folded.clear();
+        self.reconstruir_visibles();
         self.status = "Todas abiertas".into();
     }
 
@@ -809,26 +919,27 @@ impl App {
     }
 
     pub(crate) fn sanitize_folds(&mut self) {
-        let valid: HashSet<usize> = self
-            .folded
-            .iter()
-            .copied()
-            .filter(|&r| r < self.lines.len() && self.header_level(r).is_some())
-            .collect();
-        if valid.len() != self.folded.len() {
-            self.folded = valid;
+        // se llama en cada frame: primero barato, y sólo si algo caducó
+        // (una cabecera borrada o disuelta) se reconstruye la visibilidad
+        let mut caducas: Vec<usize> = Vec::new();
+        for &r in &self.folded {
+            if r >= self.lines.len() || self.header_level(r).is_none() {
+                caducas.push(r);
+            }
+        }
+        if !caducas.is_empty() {
+            for r in caducas {
+                self.folded.remove(&r);
+            }
+            self.reconstruir_visibles();
         }
     }
 
     /// fila de pantalla de una línea real (contando solo visibles desde top)
     pub(crate) fn screen_row_of(&self, row: usize) -> usize {
-        let mut sy = 0;
-        for r in self.top..row {
-            if !self.is_hidden(r) {
-                sy += 1;
-            }
-        }
-        sy
+        let itop = self.visibles.partition_point(|&r| r < self.top);
+        let irow = self.visibles.partition_point(|&r| r < row);
+        irow.saturating_sub(itop)
     }
 
     // ---------- ia ----------

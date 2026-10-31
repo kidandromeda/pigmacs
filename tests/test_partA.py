@@ -2,8 +2,8 @@
 # ————— pigmacs · tests · parte A: limpieza al arrancar y Delete/Ctrl+U —————
 # Autor:      kidandromeda
 # Licencia:   MIT
-# Versión:    3.1.0
-# Fecha:      2026-10-14
+# Versión:    4.0.0
+# Fecha:      2026-10-31
 """Parte A: limpieza al arrancar + fantasmas del Delete/Ctrl+U en el shell.
 
 Reconstruye la pantalla con un mini-emulador VT100 (CUP/EL/CR/LF/SGR) a

@@ -29,10 +29,10 @@ Dependencias (sólo 3): `anyhow`, `crossterm 0.29`, `portable-pty 0.9`.
 cargo build                # debug  → target/debug/pigmacs
 cargo build --release      # release → target/release/pigmacs
 
-# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (115 checks)
+# las 3 suites (ejecutar desde tests/); deben dar "0 fallos" (126 checks)
 cd tests
 python3 test_partA.py      #  6 checks — atajos y/render base
-python3 smoke_fase1.py     # 53 checks — smoke de fases anteriores
+python3 smoke_fase1.py     # 64 checks — smoke de fases anteriores (incluye sesión 4: plegues)
 python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, Ctrl+X…
 ```
 
@@ -44,7 +44,7 @@ python3 test_fase2.py      # 56 checks — menú, VT100, shell, Ctrl+J, resize, 
 - **Regla de oro**: `cargo build` sin *warnings* + las 3 suites en verde
   **antes** de cada commit.
 
-## Estructura de `src/` (v3.1.0, ~5600 líneas)
+## Estructura de `src/` (v4.0.0, ~5970 líneas)
 
 | módulo | líneas | contenido |
 |---|---|---|
@@ -209,13 +209,38 @@ que pigmacs sea *bonita*, con la elegancia que se puede lograr en una
    tecleado tal cual si no hay coincidencia. Ver §3 del informe.
    (+ bell y banda de estado de la IA, §3 #C.)
 
-**Definición de hecho:** `cargo build` 0 warnings + 115/115 checks en verde
+**Definición de hecho:** `cargo build` 0 warnings + 126/126 checks en verde
 antes de commit; la comprobación **en una consola VT real** (no en xterm)
 está pendiente de que la haga el usuario (el agente no tiene acceso a
 `/dev/ttyN`). `HELP_TEXT`, README e informe se actualizaron en v3.1.0.
 
-## Estado (última actualización: 2026-10-17)
+## Estado (última actualización: 2026-10-31)
 
+- **v4.0.0 publicada** (tag `v4.0.0`, release en GitHub con binario): va
+  dedicada al fix de rendimiento de abajo — deja el movimiento *plano* en
+  ficheros `.org` grandes. Sin cambios de atajos ni de UI; 126/126 checks
+  en verde.
+- **Rendimiento O(n²) → plano en ficheros grandes** (el usuario reportó
+  latencias de ~10 s por pulsación en `.org` grandes, peor cuanto más cerca
+  del final): `is_hidden()`/`fold_end()` recorrían **el fichero entero por
+  consulta** y se consultaban decenas de veces por tecla (movimiento, scroll,
+  render) → O(n²). Fix en `app.rs`/`editor.rs`/`ui.rs`/`main.rs`: nueva
+  caché de visibilidad **`reconstruir_visibles()`** (dos pasadas de pila
+  monótona: `ocultas: Vec<bool>`, `visibles: Vec<usize>` ordenada con
+  bisect y `cov: Vec<usize>`), que sólo se reconstruye al cambiar pliegues
+  o la estructura de líneas; `fold_end()` eliminado; `draw_editor_lines`
+  usa `visible_desde` (con salto a `lines.len()` si el final está oculto:
+  antes se colgaba en bucle infinito); cachés de búsqueda
+  (`matches_query`/`matches_ver`/`texto_ver`) para no reescanear el fichero
+  por frame; bisect por celda en el resaltado de coincidencias; deshacer con
+  techo de bytes (`UNDO_MAX_BYTES` = 64 MiB, cada snapshot clona el
+  fichero). **Acoplamiento detectado**: los brazos `zc`/`zo` de `editor.rs`
+  mutaban `folded` a mano sin reconstruir la caché → ahora pasan por
+  `toggle_fold()`. Medidas (release): 160k líneas **G 2274 ms → 1,6 ms**,
+  36k **174 ms → ~1,5 ms**, planas en cualquier tamaño. Sin dependencias
+  nuevas. Tests: sesión 4 «plegues» en `smoke_fase1.py` (11 checks nuevos;
+  paridad verificada también con el binario anterior). *Pendiente*:
+  comprobación en consola VT real por el usuario.
 - **`experimental/lanzador-grafico` fusionada en `main`** (merge `2add39c`) —
   **`Ctrl+X` / `Alt+X` lanzador de aplicaciones gráficas**: `src/launcher.rs`
   lee los `.desktop` del sistema (`~/.local/share/applications` primero: pisan
@@ -278,4 +303,4 @@ está pendiente de que la haga el usuario (el agente no tiene acceso a
   (incluido el shell), `MENU` con argv (neovim→nvim, lynx/w3m con
   www.duckduckgo.com) y 15 programas (con mc como «Midnight Commander»).
 - Tag `v2.0.0` + commit `52facf6` **sólo locales**: git sólo local, sin push.
-- 115/115 checks en verde, 0 warnings.
+- 126/126 checks en verde, 0 warnings.

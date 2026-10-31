@@ -1,8 +1,8 @@
 // ————— pigmacs · emulador VT100 —————
 // Autor:      kidandromeda
 // Licencia:   MIT
-// Versión:    3.1.0
-// Fecha:      2026-10-14
+// Versión:    4.0.0
+// Fecha:      2026-10-31
 use crate::frame::{Cell, Frame, Style};
 use crossterm::style::Color;
 

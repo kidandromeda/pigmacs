@@ -118,6 +118,28 @@ teclear a ciegas.
 cursor del editor); el cursor real se oculta. El banco de pruebas reconoce la
 celda por su atributo (fondo 14) — 2 checks nuevos en =smoke_fase1.py=.
 
+** 1.9 Cursor con latencia de hasta 10 s por pulsación en ficheros grandes (arreglado)
+
+*Síntoma:* en =.org= de miles de líneas cada pulsación se tardaba hasta
+~10 s, y empeoraba cuanto más abajo estaba el cursor (36k líneas: ~174 ms
+por tecla; 160k: ~2,3 s; en debug el triple).
+
+*Diagnóstico:* =is_hidden()= y =fold_end()= recorrían *el fichero entero*
+por consulta, y cada tecla los consultaba decenas de veces (mover el cursor,
+asegurar el scroll, pintar el editor) → coste cuadrático O(n²) que crece
+con la posición del cursor. El banco de pruebas (=/tmp/opencode/bench_pigmacs.py=)
+reprodujo el antes/después con ficheros de 36k/72k/160k líneas.
+
+*Arreglo:* visibilidad precalculada — =reconstruir_visibles()= (dos pasadas
+de pila monótona) genera =ocultas= (Vec<bool>), =visibles= (ordenada, con
+bisect) y =cov=, y sólo se reconstruye al cambiar pliegues o la estructura
+de líneas; =fold_end()= eliminado. Además: cachés de búsqueda para no
+reescanear el fichero por frame, bisect por celda en el resaltado de
+coincidencias y techo de memoria del deshacer (64 MiB; cada snapshot clona
+el fichero entero). Resultado (release): **2274 ms → 1,6 ms** en 160k
+líneas, *plano* en cualquier tamaño. 11 checks nuevos en =smoke_fase1.py=
+(sesión 4 «plegues», paridad verificada con el binario anterior).
+
 * 2. Entregado en esta fase: menú de programas (fase 2)
 
 ** 2.1 Qué hace
@@ -590,7 +612,7 @@ cargo build
 python3 tests/test_partA.py && python3 tests/smoke_fase1.py && python3 tests/test_fase2.py
 #+END_SRC
 
-Estado: *87/87 en verde*.
+Estado: *126/126 en verde*.
 
 * 6. Estado de los commits
 
@@ -605,6 +627,11 @@ Estado: *87/87 en verde*.
   resaltado de sintaxis en bloques SRC, menú difuso, bell de la IA.
   *Nota:* se detectó y arregló un pánico por resta sin saturar en
   =draw_keybar= que rompía el smoke tras un resize (modo debug).
+- *v4.0.0 — rendimiento plano en ficheros grandes*: publicada (tag y release
+  con binario). Caché de visibilidad de pliegues precalculada
+  (=reconstruir_visibles()=), búsqueda cacheada, bisect de coincidencias y
+  techo del deshacer. 160k líneas: 2274 ms → 1,6 ms por tecla; plano en
+  cualquier tamaño (ver §1.9). 126/126 checks en verde.
 
 * 7. Rediseño visual «tty puro» (v3.1.0)
 
